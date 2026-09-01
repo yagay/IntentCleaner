@@ -24,4 +24,9 @@ public final class RuntimeProtocol {
     public static boolean current(String state, long loaded, long installed) {
         return "UP_TO_DATE".equals(state) && loaded == installed;
     }
+
+    /** Explicit compatibility allowlist; do not infer compatibility for future schemas. */
+    public static boolean supportsSafetyPause(String state, long loaded) {
+        return ("UP_TO_DATE".equals(state) || "STALE".equals(state)) && (loaded == 19 || loaded == 20);
+    }
 }

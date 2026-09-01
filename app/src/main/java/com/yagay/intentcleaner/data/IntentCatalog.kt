@@ -24,29 +24,44 @@ import kotlinx.serialization.json.Json
 /** Evidence-based discovery, not a claim to enumerate every installed intent filter. */
 class IntentCatalog(private val context: Context) {
     @Serializable private data class KnownCandidate(val rule: ComponentRule, val label: String, val activity: String,
-        val advanced: Boolean, val evidence: List<String>)
+        val advanced: Boolean, val evidence: List<String>, val broadMatch: Boolean = false,
+        val lastSeenMillis: Long = 0L)
     private val cachePrefs = context.getSharedPreferences("catalog_cache", Context.MODE_PRIVATE)
     private val cacheJson = Json { ignoreUnknownKeys = true }
 
     suspend fun loadKnown(): List<ComponentCandidate> = withContext(Dispatchers.IO) {
         try {
             val encoded = cachePrefs.getString("entries", null) ?: return@withContext emptyList()
-            if (encoded.length > 2_000_000) return@withContext emptyList()
+            check(encoded.length <= 2_000_000) { "缓存超出大小限制" }
             cacheJson.decodeFromString(ListSerializer(KnownCandidate.serializer()), encoded).take(5_000)
                 .filter { it.rule.isValid() }.map {
                     ComponentCandidate(it.rule, it.label, it.activity,
                         loadAppIcon(it.rule.packageName) { context.packageManager.getApplicationIcon(it.rule.packageName) },
-                        it.evidence, it.advanced, unavailable = true)
+                        it.evidence, it.advanced, unavailable = true, broadMatch = it.broadMatch,
+                        lastSeenMillis = it.lastSeenMillis)
                 }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
-        } catch (_: Exception) { emptyList() }
+        } catch (failure: Exception) {
+            cacheStatus = "缓存读取失败：${failure.javaClass.simpleName}；规则不受影响"
+            emptyList()
+        }
     }
 
-    suspend fun saveKnown(items: List<ComponentCandidate>) = withContext(Dispatchers.IO) {
-        val records = items.take(5_000).map { KnownCandidate(it.rule, it.appLabel, it.activityLabel, it.advanced, it.evidence.take(3)) }
-        val encoded = cacheJson.encodeToString(ListSerializer(KnownCandidate.serializer()), records)
-        if (encoded.length <= 2_000_000) cachePrefs.edit().putString("entries", encoded).apply()
+    suspend fun saveKnown(items: List<ComponentCandidate>, selected: Set<ComponentRule> = emptySet()) = withContext(Dispatchers.IO) {
+        val selectedIds = selected.map { it.id }.toSet()
+        var records = items.sortedWith(compareBy<ComponentCandidate> { it.rule.id !in selectedIds }
+            .thenBy { it.unavailable }.thenByDescending { it.lastSeenMillis }).take(5_000)
+            .map { KnownCandidate(it.rule, it.appLabel.take(256), it.activityLabel.take(256), it.advanced,
+                it.evidence.take(3).map { evidence -> evidence.take(512) }, it.broadMatch, it.lastSeenMillis) }
+        var encoded = cacheJson.encodeToString(ListSerializer(KnownCandidate.serializer()), records)
+        while (encoded.length > 2_000_000 && records.isNotEmpty()) {
+            records = records.take(records.size * 3 / 4)
+            encoded = cacheJson.encodeToString(ListSerializer(KnownCandidate.serializer()), records)
+        }
+        cacheStatus = if (cachePrefs.edit().putString("entries", encoded).commit())
+            "缓存保存 ${records.size}/${items.size}；裁剪 ${items.size - records.size}；规则独立保存"
+        else "缓存保存失败；规则不受影响"
     }
 
     suspend fun completeConfigured(items: List<ComponentCandidate>, selected: Set<ComponentRule>): List<ComponentCandidate> = withContext(Dispatchers.IO) {
@@ -66,23 +81,41 @@ class IntentCatalog(private val context: Context) {
         private set
     @Volatile var lastFileReport: String = "No real-file probe"
         private set
+    @Volatile var cacheStatus: String = "Not loaded"
+        private set
+    @Volatile var scanWarning: String? = null
+        private set
 
     private data class Probe(val intent: Intent, val advanced: Boolean, val label: String)
-    private data class QueryResult(val candidates: List<ComponentCandidate>, val raw: Int)
+    private data class QueryResult(val candidates: List<ComponentCandidate>, val raw: Int, val flags: Int = 0)
 
     suspend fun scan(): List<ComponentCandidate> = withContext(Dispatchers.IO) {
         appIconCache.evictAll()
         val found = mutableListOf<ComponentCandidate>()
         val known = mutableSetOf<String>()
         val report = StringBuilder("startedAt=${Instant.now()}\nmanagerUid=${android.os.Process.myUid()}\n")
+        // Compare discovery against menu-style queries without launching any activity.
+        for (scheme in listOf("http", "https")) {
+            val web = Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://example.com")).addCategory(Intent.CATEGORY_BROWSABLE)
+            runCatching {
+                @Suppress("DEPRECATION")
+                val menu = context.packageManager.queryIntentActivities(web, PackageManager.MATCH_DEFAULT_ONLY)
+                @Suppress("DEPRECATION")
+                val resolved = context.packageManager.resolveActivity(web, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo
+                report.appendLine("browserBaseline scheme=$scheme flags=0x${PackageManager.MATCH_DEFAULT_ONLY.toString(16)} count=${menu.size} resolved=${resolved?.packageName}/${resolved?.name}")
+            }.onFailure { report.appendLine("browserBaseline scheme=$scheme error=${it.javaClass.simpleName}") }
+        }
         var failures = 0
+        scanWarning = null
         for (probe in probes()) {
             currentCoroutineContext().ensureActive()
             try {
                 val result = query(probe)
                 val added = result.candidates.count { known.add(it.rule.id) }
                 found += result.candidates
-                report.appendLine("${probe.label} advanced=${probe.advanced} raw=${result.raw} kept=${result.candidates.size} new=$added")
+                report.appendLine("${probe.label} broad=${probe.advanced} flags=0x${result.flags.toString(16)} raw=${result.raw} kept=${result.candidates.size} new=$added")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (failure: Exception) {
                 failures++
                 report.appendLine("${probe.label} ERROR=${failure.javaClass.name}")
@@ -91,7 +124,7 @@ class IntentCatalog(private val context: Context) {
         val result = merge(found)
         report.appendLine("finishedAt=${Instant.now()} unique=${result.size} failures=$failures")
         lastReport = report.toString()
-        check(failures == 0) { "部分扫描失败（$failures 项），已保留上次列表；请导出诊断包" }
+        if (failures > 0) scanWarning = "部分扫描失败（$failures 项）；成功结果已更新，缺失项仅作历史记录"
         result
     }
 
@@ -102,8 +135,8 @@ class IntentCatalog(private val context: Context) {
             val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
             require(intent.intentKind() == IntentKind.OPEN) { "无法确认文件类型，未归入打开方式" }
             val label = "实际文件检查 scheme=${uri.scheme} mime=$mime"
-            val result = query(Probe(intent, false, label))
-            lastFileReport = "at=${Instant.now()} $label raw=${result.raw} kept=${result.candidates.size}"
+            val result = query(Probe(intent, false, label), discovery = false)
+            lastFileReport = "at=${Instant.now()} $label flags=0x${result.flags.toString(16)} raw=${result.raw} kept=${result.candidates.size}"
             result.candidates
         } catch (failure: Exception) {
             lastFileReport = "at=${Instant.now()} scheme=${uri.scheme} error=${failure.javaClass.name}"
@@ -112,13 +145,9 @@ class IntentCatalog(private val context: Context) {
     }
 
     @Suppress("DEPRECATION")
-    private fun query(probe: Probe): QueryResult {
+    private fun query(probe: Probe, discovery: Boolean = true): QueryResult {
         val kind = probe.intent.intentKind() ?: return QueryResult(emptyList(), 0)
-        val flags = when {
-            probe.advanced -> PackageManager.MATCH_ALL
-            kind == IntentKind.PROCESS_TEXT -> 0
-            else -> PackageManager.MATCH_DEFAULT_ONLY
-        }
+        val flags = queryFlags(kind, discovery)
         val raw = context.packageManager.queryIntentActivities(probe.intent, flags)
         val candidates = raw.mapNotNull { info ->
             val activity = info.activityInfo ?: return@mapNotNull null
@@ -132,7 +161,7 @@ class IntentCatalog(private val context: Context) {
                 }
             }
             // Keep restricted matches as advanced evidence, never advertise them as ordinary targets.
-            val advanced = probe.advanced || reasons.isNotEmpty()
+            val advanced = reasons.isNotEmpty()
             ComponentCandidate(
                 rule,
                 runCatching { activity.applicationInfo.loadLabel(context.packageManager).toString() }.getOrDefault(activity.packageName),
@@ -142,10 +171,11 @@ class IntentCatalog(private val context: Context) {
                         ?: context.packageManager.defaultActivityIcon
                 },
                 evidence = listOf(probe.label + if (reasons.isEmpty()) "" else " [" + reasons.joinToString() + "]"),
-                advanced = advanced
+                advanced = advanced, broadMatch = probe.advanced,
+                lastSeenMillis = System.currentTimeMillis()
             )
         }
-        return QueryResult(candidates, raw.size)
+        return QueryResult(candidates, raw.size, flags)
     }
 
     private fun loadAppIcon(packageName: String, loader: () -> Drawable): Bitmap? {
@@ -188,9 +218,17 @@ class IntentCatalog(private val context: Context) {
     }
 
     companion object {
-        fun mergeSnapshot(previous: List<ComponentCandidate>, fresh: List<ComponentCandidate>): List<ComponentCandidate> {
+        fun queryFlags(kind: IntentKind, discovery: Boolean): Int =
+            (if (discovery) PackageManager.MATCH_ALL else 0) or
+                (if (kind == IntentKind.PROCESS_TEXT) 0 else PackageManager.MATCH_DEFAULT_ONLY)
+
+        fun mergeSnapshot(previous: List<ComponentCandidate>, fresh: List<ComponentCandidate>,
+            selected: Set<ComponentRule> = emptySet(), now: Long = System.currentTimeMillis()): List<ComponentCandidate> {
             val freshIds = fresh.map { it.rule.id }.toSet()
-            return merge(fresh + previous.filter { it.rule.id !in freshIds }.map { it.copy(unavailable = true) })
+            val selectedIds = selected.map { it.id }.toSet()
+            return merge(fresh + previous.filter { it.rule.id !in freshIds &&
+                (it.rule.id in selectedIds || it.lastSeenMillis == 0L || now - it.lastSeenMillis < 7 * 86_400_000L) }
+                .map { it.copy(unavailable = true, lastSeenMillis = if (it.lastSeenMillis == 0L) now else it.lastSeenMillis) })
         }
 
         fun merge(items: List<ComponentCandidate>): List<ComponentCandidate> =
@@ -198,7 +236,8 @@ class IntentCatalog(private val context: Context) {
                 val first = matches.firstOrNull { !it.advanced && !it.unavailable } ?: matches.first()
                 first.copy(evidence = matches.flatMap { it.evidence }.distinct()
                     .sortedBy { !it.startsWith("实际文件检查") }.take(32),
-                    advanced = matches.all { it.advanced }, unavailable = matches.all { it.unavailable })
+                    advanced = matches.all { it.advanced }, unavailable = matches.all { it.unavailable },
+                    broadMatch = matches.all { it.broadMatch }, lastSeenMillis = matches.maxOf { it.lastSeenMillis })
             }.sortedWith(compareBy({ it.rule.kind.ordinal }, { it.appLabel.lowercase() }, { it.rule.id }))
 
         private val FILE_TYPES = listOf(

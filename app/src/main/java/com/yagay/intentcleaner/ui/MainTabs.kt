@@ -45,10 +45,14 @@ fun RulesTab(state: MainState, vm: MainViewModel, onInspectFile: () -> Unit) {
         item(key = "list-summary") {
             SummaryRow(state)
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("显示高级候选", Modifier.weight(1f))
+                Text("显示受限候选", Modifier.weight(1f))
                 Switch(state.showAdvanced, vm::setShowAdvanced)
             }
-            Text("样例匹配不等于真实菜单。历史候选保留并标记未确认，不代表仍可打开；显示全部仍受分类、搜索和高级开关限制。本次会话已管理的高级项取消勾选后仍保留。",
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("显示历史候选", Modifier.weight(1f))
+                Switch(state.showHistory, vm::setShowHistory)
+            }
+            Text("样例与类型范围匹配不等于实际菜单。未确认历史项默认隐藏，未配置历史最多保留7天；已配置项始终保留管理入口（仍受分类、搜索、已选视图限制）。受限项与历史项可用开关查看，设置重启后保留。",
                 Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             OutlinedButton(onClick = onInspectFile, enabled = !state.loading,
                 modifier = Modifier.padding(horizontal = 16.dp)) { Text("用实际文件检查打开方式") }
@@ -80,7 +84,7 @@ private fun SummaryRow(state: MainState) {
         Text("应用列表 · ${state.groups.size}", style = MaterialTheme.typography.labelLarge)
         Text("计数、标签和应用勾选均仅作用于当前可见匹配组件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (state.displayMode == DisplayMode.SHOW_ALL) {
-            Text("过滤已暂停，勾选及排序保留", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Text(if (state.runtime.ready) "system 已确认暂停过滤，勾选及排序保留" else "本地已选择暂停，尚未确认系统已应用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         } else if (state.displayMode == DisplayMode.SHOW_SELECTED) {
             Text("未设置勾选的分类暂时显示全部", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         }
@@ -137,7 +141,7 @@ fun DashboardTabContent(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text(state.syncStatus, fontWeight = FontWeight.Bold)
-                Text("规则变更会实时推送到选择器宿主。", style = MaterialTheme.typography.bodySmall)
+                Text("本地保存不等于系统生效；以配置确认状态为准，Resolver 侧效果仍需实际验证。", style = MaterialTheme.typography.bodySmall)
             }
         }
         

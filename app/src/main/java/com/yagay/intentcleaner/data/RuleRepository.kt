@@ -72,11 +72,12 @@ class RuleRepository(context: Context) {
 
     @Synchronized fun toggle(rule: ComponentRule) {
         require(rule.isValid()) { "无效的组件规则" }
-        updateRules(mutableRules.value.toMutableSet().apply { if (!add(rule)) remove(rule) }.toSet())
+        val canonical = requireNotNull(ComponentRule.fromId(rule.id))
+        updateRules(mutableRules.value.toMutableSet().apply { if (!add(canonical)) remove(canonical) }.toSet())
     }
 
     @Synchronized fun setSelected(rules: Collection<ComponentRule>, selected: Boolean) {
-        val valid = rules.filter(ComponentRule::isValid)
+        val valid = rules.filter(ComponentRule::isValid).mapNotNull { ComponentRule.fromId(it.id) }
         val next = mutableRules.value.toMutableSet().apply {
             if (selected) addAll(valid) else removeAll(valid.toSet())
         }.toSet()

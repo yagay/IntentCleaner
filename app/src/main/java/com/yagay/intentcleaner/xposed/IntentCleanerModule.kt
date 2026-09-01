@@ -54,6 +54,7 @@ class IntentCleanerModule : XposedModule() {
 
     @Volatile
     private var snapshot = RuleSnapshot(emptySet(), DisplayMode.HIDE_SELECTED, PriorityConfig(), false)
+    private var lastEncodedConfig: String? = null
     @Volatile
     private var listenerRegistered = false
     private var processName = ""
@@ -100,9 +101,16 @@ class IntentCleanerModule : XposedModule() {
     override fun onHotReloaded(param: HotReloadedParam) {
         processName = param.processName
         systemServer = param.isSystemServer
-        initializePreferences()
         val loaders = linkedSetOf<ClassLoader>()
         try {
+            // Validate the incoming handle set before replacing any hook. This is not
+            // whole-generation rollback, but avoids destructive changes on an unusable set.
+            check(param.oldHookHandles.any { handle ->
+                val method = handle.executable as? Method
+                handle.id == "$HOOK_ID-${if (systemServer) "system" else "resolver"}" &&
+                    method != null && isQueryIntentActivitiesMethod(method)
+            }) { "No compatible query handle; restart required" }
+            initializePreferences()
             param.oldHookHandles.forEach { handle ->
                 val method = handle.executable as? Method
                 method?.declaringClass?.classLoader?.let(loaders::add)
@@ -438,11 +446,14 @@ class IntentCleanerModule : XposedModule() {
     @Synchronized private fun refreshRulesSafely(reason: String) {
         runCatching {
             preferences.getString(RuleRepository.KEY_CONFIG, null)?.let { encoded ->
+                if (lastEncodedConfig == encoded) return@runCatching
+                require(encoded.length <= RuleRepository.MAX_BACKUP_CHARS) { "Config too large" }
                 val digest = RuntimeProtocol.digest(encoded)
                 if (snapshot.digest == digest) return@runCatching
                 val config = Json { ignoreUnknownKeys = true }.decodeFromString(ModuleConfig.serializer(), encoded).validated()
                 snapshot = RuleSnapshot(config.rules.map { it.id }.toSet(), config.mode,
                     config.priorities, config.diagnostic, config.managerAppId, digest)
+                lastEncodedConfig = encoded
                 record("MANAGER_IDENTITY appId=${config.managerAppId} source=remote_config")
                 record("RULES_READ reason=$reason count=${snapshot.configured.size} mode=${config.mode} diagnostic=${config.diagnostic} atomic=true")
                 return@runCatching
@@ -462,6 +473,7 @@ class IntentCleanerModule : XposedModule() {
                 configured = rules, displayMode = mode, priorities = priorities,
                 diagnostic = preferences.getBoolean(RuleRepository.KEY_DIAGNOSTIC, false)
             )
+            lastEncodedConfig = null
             record("RULES_READ reason=$reason count=${rules.size} mode=$mode diagnostic=${snapshot.diagnostic}")
         }.onFailure {
             record("RULES_READ_FAILED error=${it.javaClass.name}")

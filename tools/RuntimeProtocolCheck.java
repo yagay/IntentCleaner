@@ -7,6 +7,12 @@ public final class RuntimeProtocolCheck {
         if (!condition) throw new AssertionError("check " + checks);
     }
     public static void main(String[] args) {
+        check(RuntimeProtocol.supportsSafetyPause("STALE", 19));
+        check(RuntimeProtocol.supportsSafetyPause("UP_TO_DATE", 20));
+        check(!RuntimeProtocol.supportsSafetyPause("STALE", 18));
+        check(!RuntimeProtocol.supportsSafetyPause("STALE", 21));
+        check(!RuntimeProtocol.supportsSafetyPause("RELOADING", 19));
+        check(!RuntimeProtocol.supportsSafetyPause("FAILED", 19));
         check(RuntimeProtocol.current("UP_TO_DATE", 19, 19));
         check(!RuntimeProtocol.current("STALE", 19, 19));
         check(!RuntimeProtocol.current("UP_TO_DATE", 17, 19));

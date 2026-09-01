@@ -39,6 +39,10 @@ public final class DiagnosticEvidence {
                 line.contains(" QUERY ") ? "queryObserved" :
                 line.contains(" ORDER_APPLIED ") ? "orderObserved" :
                 line.contains(" MANAGER_QUERY_BYPASS ") ? "managerBypass" :
+                line.contains(" CONFIG_ACK ") ? "configAcknowledged" :
+                line.contains(" HOT_RELOAD_READY ") ? "hotReloadReady" :
+                line.contains(" HOT_RELOAD_FAILED ") ? "hotReloadFailed" :
+                line.contains(" RULES_READ_FAILED ") ? "rulesReadFailed" :
                 line.contains("FILTER_PAUSED") ? "identityUnknown" : null;
             if (stage != null) {
                 Matcher kind = KIND.matcher(line);

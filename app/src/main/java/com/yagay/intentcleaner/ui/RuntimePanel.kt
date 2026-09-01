@@ -25,7 +25,7 @@ internal fun RuntimePanel(state: MainState, vm: MainViewModel) {
         }
         if (state.runtime.needsDecision) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { vm.resolveRecovery(true) }) { Text("恢复远程配置") }
+                Button(onClick = { vm.resolveRecovery(true) }, enabled = !state.runtime.recoveryCorrupt) { Text("恢复远程配置") }
                 OutlinedButton(onClick = { confirmReset = true }) { Text("重置并暂停过滤") }
             }
         }

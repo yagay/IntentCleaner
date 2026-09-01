@@ -79,6 +79,9 @@ import com.yagay.intentcleaner.domain.ComponentRule
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                val historical = group.components.count { it.unavailable }
+                if (historical > 0) Text("含 $historical 个历史／未确认组件", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error)
             }
             IconButton(onClick = onExpand) {
                 Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (expanded) "折叠" else "展开")
@@ -129,7 +132,8 @@ import com.yagay.intentcleaner.domain.ComponentRule
                     )
                     if (item.unavailable) Text("保留管理入口 · 本次匹配未确认", style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error)
-                    else if (item.advanced) Text("高级候选 · 非普通打开入口保证", style = MaterialTheme.typography.labelSmall)
+                    else if (item.advanced) Text("受限候选 · 权限或组件状态受限", style = MaterialTheme.typography.labelSmall)
+                    if (item.broadMatch) Text("类型范围匹配 · 尚未通过具体文件确认", style = MaterialTheme.typography.labelSmall)
                     item.evidence.take(3).forEach { reason ->
                         Text(reason, style = MaterialTheme.typography.labelSmall, maxLines = 2,
                             overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)

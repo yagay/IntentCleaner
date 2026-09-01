@@ -36,6 +36,7 @@ object DiagnosticCollector {
                 val app = context.applicationContext as IntentCleanerApp
                 zip.addText("app/scan-probes.txt", app.catalog.lastReport)
                 zip.addText("app/real-file-probe.txt", app.catalog.lastFileReport)
+                zip.addText("app/catalog-cache.txt", app.catalog.cacheStatus + "\nscanWarning=" + app.catalog.scanWarning)
                 val candidateEvidence = DiagnosticBuffer(MAX_TEXT_BYTES)
                 fun appendCandidateLine(line: String) {
                     val bytes = (line + "\n").toByteArray(StandardCharsets.UTF_8)
@@ -43,7 +44,8 @@ object DiagnosticCollector {
                 }
                 appendCandidateLine("UI snapshot; sample matches are not proof of real-file launchability.")
                 state.candidates.forEach { candidate ->
-                    appendCandidateLine("${candidate.rule.id} advanced=${candidate.advanced} unavailable=${candidate.unavailable}")
+                    appendCandidateLine("${candidate.rule.id} restricted=${candidate.advanced} broad=${candidate.broadMatch} unavailable=${candidate.unavailable} lastSeen=${candidate.lastSeenMillis}" +
+                        " catalogVisible=${catalogVisible(candidate, state.selected, state.showAdvanced, state.showHistory)}")
                     candidate.evidence.forEach { appendCandidateLine("  $it") }
                 }
                 zip.addText("app/scan-candidates.txt", "truncated=${candidateEvidence.truncated()}\n" +
@@ -125,10 +127,13 @@ object DiagnosticCollector {
         appendLine("diagnosticMode=${state.diagnosticMode}")
         appendLine("syncStatus=${state.syncStatus}")
         appendLine("systemConfigAcknowledged=${state.runtime.ready}")
+        appendLine("statusSource=last_observed_no_sync_before_export")
+        appendLine("runtimeObservedAtMillis=${state.runtime.observedAtMillis}")
+        appendLine("runtimeObservationAgeMillis=${System.currentTimeMillis() - state.runtime.observedAtMillis}")
         appendLine("configDigest=${state.runtime.digest}")
         appendLine("recoveryDecisionRequired=${state.runtime.needsDecision}")
         appendLine("runtimeMessage=${state.runtime.message}")
-        appendLine("uiFilter=${state.uiFilter} category=${state.filter} showAdvanced=${state.showAdvanced}")
+        appendLine("uiFilter=${state.uiFilter} category=${state.filter} showAdvanced=${state.showAdvanced} showHistory=${state.showHistory}")
         appendLine("searchActive=${state.query.isNotBlank()} candidates=${state.candidates.size} visibleGroups=${state.groups.size}")
         state.module.runningTargets.forEach {
             appendLine("target=${it.processName}|${it.state}|version=${it.version}")

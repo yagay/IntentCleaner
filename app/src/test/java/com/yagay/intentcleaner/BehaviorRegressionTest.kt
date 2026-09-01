@@ -15,6 +15,48 @@ import java.io.Reader
 import java.io.StringReader
 
 class BehaviorRegressionTest {
+    @Test fun browserDiscoveryDoesNotUseMenuFlags() {
+        val flags = com.yagay.intentcleaner.data.IntentCatalog.queryFlags(IntentKind.BROWSER, true)
+        assertTrue(flags and android.content.pm.PackageManager.MATCH_ALL != 0)
+        assertTrue(flags and android.content.pm.PackageManager.MATCH_DEFAULT_ONLY != 0)
+        assertEquals(android.content.pm.PackageManager.MATCH_DEFAULT_ONLY,
+            com.yagay.intentcleaner.data.IntentCatalog.queryFlags(IntentKind.OPEN, false))
+        assertEquals(0, com.yagay.intentcleaner.data.IntentCatalog.queryFlags(IntentKind.PROCESS_TEXT, false))
+    }
+
+    @Test fun historyIsSeparateButSelectedRulesStayManageable() {
+        val old = candidate(IntentKind.BROWSER).copy(unavailable = true)
+        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(old, emptySet(), false, false))
+        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(old, emptySet(), false, true))
+        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(old, setOf(old.rule), false, false))
+    }
+
+    @Test fun broadEvidenceDoesNotMeanRestricted() {
+        val broad = candidate(IntentKind.OPEN).copy(broadMatch = true)
+        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(broad, emptySet(), false, false))
+        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(broad.copy(advanced = true), emptySet(), false, false))
+    }
+
+    @Test fun oldUnselectedHistoryExpiresButConfiguredHistoryDoesNot() {
+        val old = candidate(IntentKind.OPEN).copy(lastSeenMillis = 1L)
+        val now = 8 * 86_400_000L
+        assertTrue(com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(old), emptyList(), now = now).isEmpty())
+        assertEquals(old.rule, com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(old), emptyList(), setOf(old.rule), now).single().rule)
+    }
+
+    @Test fun cancellingARestrictedRuleHasTheSameVisibilityAfterRestart() {
+        val item = candidate(IntentKind.OPEN).copy(advanced = true)
+        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(item, setOf(item.rule), false, false))
+        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(item, emptySet(), false, false))
+        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(item, emptySet(), false, false))
+        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(item, emptySet(), true, false))
+    }
+
+    @Test fun relativeStoredRuleUsesCanonicalIdentity() {
+        assertEquals(ComponentRule(IntentKind.OPEN, "com.example", "com.example.Open"),
+            ComponentRule.fromId("OPEN|com.example|.Open"))
+    }
+
     @Test fun selectingInAllViewDoesNotRemoveAnApp() {
         val item = candidate(IntentKind.BROWSER)
         assertEquals(groupCandidates(listOf(item), emptySet(), IntentKind.BROWSER, "", UiFilter.ALL),

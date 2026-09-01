@@ -39,7 +39,8 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
     }
     
     val available = apps.keys.filter { packageName ->
-        packageName !in rankedRaw && (state.query.isBlank() || packageName.contains(state.query, true) ||
+        packageName !in rankedRaw && apps.getValue(packageName).any { !it.unavailable && !it.advanced } &&
+            (state.query.isBlank() || packageName.contains(state.query, true) ||
             apps.getValue(packageName).first().appLabel.contains(state.query, true))
     }.sortedBy { apps.getValue(it).first().appLabel.lowercase() }
 
@@ -98,7 +99,7 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                         Column(Modifier.weight(1f)) {
                             Text("${originalIndex + 1}. ${components.firstOrNull()?.appLabel ?: packageName}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (allHidden) Text("当前分类已隐藏", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                            else if (components.isEmpty()) Text("本次未扫描到", style = MaterialTheme.typography.labelSmall)
+                            else if (components.isEmpty() || components.all { it.unavailable }) Text("仅保留排序配置 · 本次未确认", style = MaterialTheme.typography.labelSmall)
                         }
                         IconButton(onClick = { vm.movePriority(kind, packageName, -1) }, enabled = originalIndex > 0) { Icon(Icons.Rounded.ArrowUpward, "上移") }
                         IconButton(onClick = { vm.movePriority(kind, packageName, 1) }, enabled = originalIndex < rankedRaw.lastIndex) { Icon(Icons.Rounded.ArrowDownward, "下移") }

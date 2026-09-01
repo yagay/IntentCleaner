@@ -30,7 +30,8 @@ data class ComponentRule(val kind: IntentKind, val packageName: String, val clas
         fun fromId(id: String): ComponentRule? {
             val parts = id.split('|', limit = 3)
             return if (parts.size == 3) runCatching {
-                ComponentRule(IntentKind.valueOf(parts[0]), parts[1], parts[2]).takeIf(ComponentRule::isValid)
+                ComponentRule(IntentKind.valueOf(parts[0]), parts[1],
+                    if (parts[2].startsWith('.')) parts[1] + parts[2] else parts[2]).takeIf(ComponentRule::isValid)
             }.getOrNull() else null
         }
     }
@@ -43,7 +44,9 @@ data class ComponentCandidate(
     val appIcon: Bitmap? = null,
     val evidence: List<String> = emptyList(),
     val advanced: Boolean = false,
-    val unavailable: Boolean = false
+    val unavailable: Boolean = false,
+    val broadMatch: Boolean = false,
+    val lastSeenMillis: Long = 0L
 )
 
 @Serializable

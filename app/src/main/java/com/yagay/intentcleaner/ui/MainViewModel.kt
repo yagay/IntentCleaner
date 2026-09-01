@@ -92,7 +92,8 @@ data class MainState(
     val destination: Destination = Destination.RULES,
     val expandedAppKey: String? = null,
     val showAdvanced: Boolean = false,
-    val runtime: RuntimeStatus = RuntimeStatus()
+    val runtime: RuntimeStatus = RuntimeStatus(),
+    val showHistory: Boolean = false
 )
 
 data class AppGroup(
@@ -135,12 +136,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val updating: StateFlow<Boolean> = mutableUpdating
     private val mutableUpdateMessage = MutableStateFlow<String?>(null)
     val updateMessage: StateFlow<String?> = mutableUpdateMessage
-    private val seenSelected = mutableSetOf<String>()
+    private val viewPrefs = application.getSharedPreferences("catalog_view", android.content.Context.MODE_PRIVATE)
     private val candidates = MutableStateFlow<List<ComponentCandidate>>(emptyList())
-    private val showAdvanced = MutableStateFlow(false)
+    private val showAdvanced = MutableStateFlow(viewPrefs.getBoolean("restricted", false))
+    private val showHistory = MutableStateFlow(viewPrefs.getBoolean("history", false))
     private val mutableFileCheckStatus = MutableStateFlow<String?>(null)
     val fileCheckStatus: StateFlow<String?> = mutableFileCheckStatus
-    fun setShowAdvanced(value: Boolean) { showAdvanced.value = value }
+    fun setShowAdvanced(value: Boolean) {
+        showAdvanced.value = value
+        viewPrefs.edit().putBoolean("restricted", value).apply()
+    }
+    fun setShowHistory(value: Boolean) {
+        showHistory.value = value
+        viewPrefs.edit().putBoolean("history", value).apply()
+    }
 
     fun inspectFile(uri: Uri) {
         val generation = ++refreshGeneration
@@ -154,8 +163,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val found = app.catalog.inspectFile(uri)
                 check(app.synchronize()) { app.runtime.value.message }
                 if (generation == refreshGeneration) {
-                    candidates.value = IntentCatalog.merge(candidates.value + found)
-                    app.catalog.saveKnown(candidates.value)
+                    val foundIds = found.map { it.rule.id }.toSet()
+                    candidates.value = IntentCatalog.merge(found + candidates.value.filter { it.rule.id !in foundIds })
+                    app.catalog.saveKnown(candidates.value, app.rules.rules.value)
                     mutableFileCheckStatus.value = "本次实际文件查询返回 ${found.size} 个组件，已合并并标注匹配依据"
                 }
             } catch (cancelled: CancellationException) {
@@ -193,8 +203,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             var report: File? = null
             try {
-                app.synchronize()
-                val freshStatus = readModuleStatus(app.service.value)
+                // Rescue path: never wait for the sync mutex, PM probes or framework IPC.
+                // Export the last observed status with its age, then collect raw logs independently.
+                val freshStatus = moduleStatus.value
                 val config = app.rules.remoteSnapshot()
                 report = DiagnosticCollector.collect(app, state.value.copy(
                     module = freshStatus, selected = config.rules, displayMode = config.mode,
@@ -220,14 +231,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private data class ListContent(val candidates: List<ComponentCandidate>, val filter: IntentKind?, val query: String, val groups: List<AppGroup>, val advanced: Boolean = false,
-        val selected: Set<ComponentRule> = emptySet(), val uiFilter: UiFilter = UiFilter.ALL)
+        val selected: Set<ComponentRule> = emptySet(), val uiFilter: UiFilter = UiFilter.ALL,
+        val history: Boolean = false)
 
-    private val catalogView = combine(candidates, showAdvanced) { items, advanced -> items to advanced }
+    private data class CatalogView(val items: List<ComponentCandidate>, val restricted: Boolean, val history: Boolean)
+    private val catalogView = combine(candidates, showAdvanced, showHistory) { items, advanced, history -> CatalogView(items, advanced, history) }
     private val grouped = combine(catalogView, app.rules.rules, filter, query, uiFilter) { view, selected, kind, text, ui ->
-        val items = retainConfiguredCandidates(view.first, selected)
-        seenSelected.addAll(selected.map { it.id })
-        val visible = items.filter { view.second || !it.advanced || it.rule.id in seenSelected }
-        ListContent(items, kind, text, groupCandidates(visible, selected, kind, text, ui), view.second, selected, ui)
+        val items = retainConfiguredCandidates(view.items, selected)
+        val visible = items.filter { catalogVisible(it, selected, view.restricted, view.history) }
+        ListContent(items, kind, text, groupCandidates(visible, selected, kind, text, ui), view.restricted, selected, ui, view.history)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListContent(emptyList(), null, "", emptyList()))
     
     val state: StateFlow<MainState> = combine(
@@ -245,6 +257,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             filter = (values[3] as ListContent).filter,
             query = (values[3] as ListContent).query,
             showAdvanced = (values[3] as ListContent).advanced,
+            showHistory = (values[3] as ListContent).history,
             priorities = values[6] as PriorityConfig,
             groups = (values[3] as ListContent).groups,
             diagnosticMode = values[7] as Boolean,
@@ -283,8 +296,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val result = app.catalog.scan()
                 check(app.synchronize()) { app.runtime.value.message }
                 if (generation == refreshGeneration) {
-                    candidates.value = IntentCatalog.mergeSnapshot(candidates.value, result)
-                    app.catalog.saveKnown(candidates.value)
+                    candidates.value = IntentCatalog.mergeSnapshot(candidates.value, result, app.rules.rules.value)
+                    app.catalog.saveKnown(candidates.value, app.rules.rules.value)
+                    error.value = app.catalog.scanWarning
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -322,6 +336,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val pending = targets.filter { !RuntimeProtocol.current(it.state.name, it.loadedVersionCode, BuildConfig.VERSION_CODE.toLong()) }
                 val messages = mutableListOf<String>()
                 for (target in pending) {
+                    try {
                     if (target.state == HookedTarget.State.RELOADING) {
                         messages += "${target.processName}：框架正在重载，请稍后重新检测"
                         continue
@@ -346,6 +361,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         HotReloadResult.Status.PROCESS_DIED -> "目标已退出，等待重新启动"
                         HotReloadResult.Status.IN_PROGRESS -> "框架正在重载，请稍后重新检测"
                         null -> "等待超时，不代表已取消；请重新检测，勿重复请求"
+                    }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        messages += "${target.processName}：更新请求失败（${failure.javaClass.simpleName}）；继续检查其他目标"
                     }
                 }
                 mutableUpdateMessage.value = if (messages.isEmpty()) "没有需要热更新的运行目标；正在核实配置" else messages.joinToString("\n")
@@ -476,4 +496,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         const val MAX_BACKUP_CHARS = RuleRepository.MAX_BACKUP_CHARS
     }
+}
+
+internal fun catalogVisible(item: ComponentCandidate, selected: Set<ComponentRule>,
+    restricted: Boolean, history: Boolean): Boolean {
+    if (selected.any { it.id == item.rule.id }) return true
+    return (!item.unavailable || history) && (!item.advanced || restricted)
 }
