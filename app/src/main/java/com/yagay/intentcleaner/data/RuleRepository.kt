@@ -1,0 +1,129 @@
+package com.yagay.intentcleaner.data
+
+import android.content.Context
+import com.yagay.intentcleaner.domain.ComponentRule
+import com.yagay.intentcleaner.domain.RuleBackup
+import com.yagay.intentcleaner.domain.DisplayMode
+import com.yagay.intentcleaner.domain.PriorityConfig
+import com.yagay.intentcleaner.domain.IntentKind
+import com.yagay.intentcleaner.domain.ModuleConfig
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+
+class RuleRepository(context: Context) {
+    private val prefs = context.getSharedPreferences(LOCAL_PREFS, Context.MODE_PRIVATE)
+    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    private val mutableRules = MutableStateFlow(
+        prefs.getStringSet(KEY_RULES, emptySet()).orEmpty().mapNotNull(ComponentRule::fromId).toSet()
+    )
+    private val mutableMode = MutableStateFlow(DisplayMode.fromStored(prefs.getString(KEY_DISPLAY_MODE, null), prefs.getBoolean(KEY_BLACKLIST, true)))
+    private val mutablePriorities = MutableStateFlow(runCatching {
+        json.decodeFromString(PriorityConfig.serializer(), prefs.getString(KEY_PRIORITIES, null) ?: "{}").validated()
+    }.getOrDefault(PriorityConfig()))
+    private val mutableDiagnostic = MutableStateFlow(prefs.getBoolean(KEY_DIAGNOSTIC, false))
+
+    val rules: StateFlow<Set<ComponentRule>> = mutableRules.asStateFlow()
+    val displayMode: StateFlow<DisplayMode> = mutableMode.asStateFlow()
+    val priorities: StateFlow<PriorityConfig> = mutablePriorities.asStateFlow()
+    val diagnosticMode: StateFlow<Boolean> = mutableDiagnostic.asStateFlow()
+    private val mutableRevision = MutableStateFlow(0L)
+    val revision: StateFlow<Long> = mutableRevision.asStateFlow()
+
+    @Synchronized fun remoteSnapshot(): ModuleConfig = ModuleConfig(
+        mutableRules.value.toSet(), mutableMode.value, mutablePriorities.value,
+        mutableDiagnostic.value, android.os.Process.myUid() % 100_000
+    )
+
+    @Synchronized
+
+    fun setDiagnosticMode(enabled: Boolean) {
+        mutableDiagnostic.value = enabled
+        prefs.edit().putBoolean(KEY_DIAGNOSTIC, enabled).apply()
+        mutableRevision.value++
+    }
+
+    @Synchronized
+    fun setPriority(kind: IntentKind, packages: List<String>) {
+        val next = PriorityConfig(mutablePriorities.value.apps.toMutableMap().apply {
+            if (packages.isEmpty()) remove(kind) else put(kind, packages.toList())
+        }).validated()
+        prefs.edit().putString(KEY_PRIORITIES, encodePriorities(next)).apply()
+        mutablePriorities.value = next
+        mutableRevision.value++
+    }
+
+    fun encodePriorities(value: PriorityConfig = mutablePriorities.value): String =
+        json.encodeToString(PriorityConfig.serializer(), value)
+
+    @Synchronized fun toggle(rule: ComponentRule) {
+        require(rule.isValid()) { "无效的组件规则" }
+        updateRules(mutableRules.value.toMutableSet().apply { if (!add(rule)) remove(rule) }.toSet())
+    }
+
+    @Synchronized fun setSelected(rules: Collection<ComponentRule>, selected: Boolean) {
+        val valid = rules.filter(ComponentRule::isValid)
+        val next = mutableRules.value.toMutableSet().apply {
+            if (selected) addAll(valid) else removeAll(valid.toSet())
+        }.toSet()
+        updateRules(next)
+    }
+
+    @Synchronized fun setDisplayMode(value: DisplayMode) {
+        // An empty whitelist is treated as disabled by the hook, so it can never blank the Resolver.
+        mutableMode.value = value
+        prefs.edit().putString(KEY_DISPLAY_MODE, value.name).apply()
+        mutableRevision.value++
+    }
+
+    @Synchronized
+    fun replace(rules: Set<ComponentRule>, blacklist: Boolean, priorities: PriorityConfig = PriorityConfig(), displayMode: DisplayMode = DisplayMode.fromStored(null, blacklist)) {
+        require(rules.size <= MAX_RULES) { "备份规则数量过多" }
+        require(rules.all(ComponentRule::isValid)) { "备份包含无效组件" }
+        priorities.validated()
+        mutableRules.value = rules.mapNotNull { ComponentRule.fromId(it.id) }.toSet()
+        mutableMode.value = displayMode
+        mutablePriorities.value = priorities
+        prefs.edit()
+            .putStringSet(KEY_RULES, rules.map(ComponentRule::id).toSet())
+            .putBoolean(KEY_BLACKLIST, blacklist)
+            .putString(KEY_DISPLAY_MODE, displayMode.name)
+            .putString(KEY_PRIORITIES, encodePriorities(priorities))
+            .apply()
+        mutableRevision.value++
+    }
+
+    @Synchronized fun exportJson(): String = json.encodeToString(
+        RuleBackup.serializer(),
+        RuleBackup(version = 3, blacklist = mutableMode.value != DisplayMode.SHOW_SELECTED, rules = mutableRules.value, priorities = mutablePriorities.value, displayMode = mutableMode.value)
+    )
+
+    fun importJson(content: String) {
+        require(content.length <= MAX_BACKUP_CHARS) { "备份文件过大" }
+        val backup = json.decodeFromString(RuleBackup.serializer(), content)
+        require(backup.version in 1..3) { "不支持的备份版本：${backup.version}" }
+        replace(backup.rules, backup.blacklist, if (backup.version == 1) PriorityConfig() else backup.priorities, if (backup.version >= 3) requireNotNull(backup.displayMode) { "备份缺少显示模式" } else DisplayMode.fromStored(null, backup.blacklist))
+    }
+
+    private fun updateRules(next: Set<ComponentRule>) {
+        require(next.size <= MAX_RULES) { "规则数量过多" }
+        mutableRules.value = next
+        prefs.edit().putStringSet(KEY_RULES, next.map(ComponentRule::id).toSet()).apply()
+        mutableRevision.value++
+    }
+
+    companion object {
+        const val REMOTE_PREFS = "rules"
+        const val KEY_RULES = "components"
+        const val KEY_BLACKLIST = "blacklist"
+        const val KEY_DISPLAY_MODE = "display_mode"
+        const val KEY_PRIORITIES = "priority_apps"
+        const val KEY_DIAGNOSTIC = "diagnostic_mode"
+        const val KEY_CONFIG = "config_v1"
+        val SYNCED_KEYS = setOf(KEY_RULES, KEY_BLACKLIST, KEY_DISPLAY_MODE, KEY_PRIORITIES, KEY_DIAGNOSTIC)
+        private const val LOCAL_PREFS = "rules_local"
+        private const val MAX_RULES = 20_000
+        const val MAX_BACKUP_CHARS = 2_000_000
+    }
+}
