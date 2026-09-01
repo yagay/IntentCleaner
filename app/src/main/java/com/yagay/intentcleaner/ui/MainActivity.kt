@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (state.destination) {
-                    Destination.RULES -> RulesTab(state, vm) { fileCheck.launch(arrayOf("*/*")) }
+                    Destination.RULES -> RulesTab(state, vm)
                     Destination.PRIORITY -> PriorityTab(state, vm)
                     Destination.DASHBOARD -> DashboardTabContent(state, vm,
                         { restore.launch(arrayOf("application/json", "text/plain")) },
@@ -154,7 +154,7 @@ class MainActivity : ComponentActivity() {
                         {
                             val stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
                             diagnosticExport.launch("Intentcleaner-diagnostic-$stamp.zip")
-                        })
+                        }, { fileCheck.launch(arrayOf("*/*")) })
                 }
             }
         }

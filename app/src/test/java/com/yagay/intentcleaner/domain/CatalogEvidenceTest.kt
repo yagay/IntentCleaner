@@ -7,11 +7,11 @@ import org.junit.Test
 class CatalogEvidenceTest {
     private val rule = ComponentRule(IntentKind.OPEN, "com.example", "com.example.Open")
 
-    @Test fun ordinaryEvidencePromotesAnAdvancedOnlyCandidate() {
-        val broad = ComponentCandidate(rule, "App", "Open", evidence = listOf("宽泛"), advanced = true)
-        val ordinary = broad.copy(evidence = listOf("普通"), advanced = false)
-        val merged = IntentCatalog.merge(listOf(broad, ordinary)).single()
-        assertFalse(merged.advanced)
+    @Test fun unrestrictedEvidenceWinsOverRestrictedProbe() {
+        val limited = ComponentCandidate(rule, "App", "Open", evidence = listOf("宽泛"), restricted = true)
+        val ordinary = limited.copy(evidence = listOf("普通"), restricted = false)
+        val merged = IntentCatalog.merge(listOf(limited, ordinary)).single()
+        assertFalse(merged.restricted)
         assertEquals(listOf("宽泛", "普通"), merged.evidence)
     }
 

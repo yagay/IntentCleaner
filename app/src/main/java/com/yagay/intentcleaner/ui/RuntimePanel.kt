@@ -7,7 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun RuntimePanel(state: MainState, vm: MainViewModel) {
+internal fun RuntimePanel(state: MainState, vm: MainViewModel, showUpdateTools: Boolean = true) {
     val updating by vm.updating.collectAsState()
     val result by vm.updateMessage.collectAsState()
     var confirmReset by remember { mutableStateOf(false) }
@@ -21,7 +21,7 @@ internal fun RuntimePanel(state: MainState, vm: MainViewModel) {
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!state.runtime.ready) {
             Text(state.runtime.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-            Text("当前列表可能是历史记录；验证失败不会用新扫描覆盖它。", style = MaterialTheme.typography.labelSmall)
+            if (showUpdateTools) Text("验证失败时不更新扫描结果；已选规则仍可管理。", style = MaterialTheme.typography.labelSmall)
         }
         if (state.runtime.needsDecision) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -29,9 +29,9 @@ internal fun RuntimePanel(state: MainState, vm: MainViewModel) {
                 OutlinedButton(onClick = { confirmReset = true }) { Text("重置并暂停过滤") }
             }
         }
-        OutlinedButton(onClick = vm::applyModuleUpdate, enabled = state.module.connected && !updating) {
+        if (showUpdateTools) OutlinedButton(onClick = vm::applyModuleUpdate, enabled = state.module.connected && !updating) {
             Text(if (updating) "正在检查更新…" else "检测并应用模块更新")
         }
-        result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        if (showUpdateTools) result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 }

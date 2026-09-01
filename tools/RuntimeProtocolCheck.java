@@ -10,7 +10,8 @@ public final class RuntimeProtocolCheck {
         check(RuntimeProtocol.supportsSafetyPause("STALE", 19));
         check(RuntimeProtocol.supportsSafetyPause("UP_TO_DATE", 20));
         check(!RuntimeProtocol.supportsSafetyPause("STALE", 18));
-        check(!RuntimeProtocol.supportsSafetyPause("STALE", 21));
+        check(RuntimeProtocol.supportsSafetyPause("STALE", 21));
+        check(!RuntimeProtocol.supportsSafetyPause("STALE", 22));
         check(!RuntimeProtocol.supportsSafetyPause("RELOADING", 19));
         check(!RuntimeProtocol.supportsSafetyPause("FAILED", 19));
         check(RuntimeProtocol.current("UP_TO_DATE", 19, 19));

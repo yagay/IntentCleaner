@@ -17,7 +17,6 @@ import com.yagay.intentcleaner.domain.RuntimeProtocol
 import io.github.libxposed.service.HookedTarget
 import io.github.libxposed.service.HotReloadResult
 import com.yagay.intentcleaner.data.RuleRepository
-import com.yagay.intentcleaner.data.IntentCatalog
 import com.yagay.intentcleaner.data.ResolverScopeDetector
 import com.yagay.intentcleaner.data.ScopeDetection
 import com.yagay.intentcleaner.domain.ComponentCandidate
@@ -70,9 +69,9 @@ enum class Destination(val label: String, val icon: androidx.compose.ui.graphics
 }
 
 enum class UiFilter(val title: String) {
-    ALL("显示全部"),
-    HIDE_SELECTED("隐藏已选"),
-    SHOW_SELECTED("只看已选")
+    ALL("全部"),
+    HIDE_SELECTED("未选规则"),
+    SHOW_SELECTED("已选规则")
 }
 
 data class MainState(
@@ -91,9 +90,7 @@ data class MainState(
     val groups: List<AppGroup> = emptyList(),
     val destination: Destination = Destination.RULES,
     val expandedAppKey: String? = null,
-    val showAdvanced: Boolean = false,
-    val runtime: RuntimeStatus = RuntimeStatus(),
-    val showHistory: Boolean = false
+    val runtime: RuntimeStatus = RuntimeStatus()
 )
 
 data class AppGroup(
@@ -112,7 +109,7 @@ fun groupCandidates(candidates: List<ComponentCandidate>, selected: Set<Componen
                 UiFilter.HIDE_SELECTED -> !isSelected
                 UiFilter.SHOW_SELECTED -> isSelected
             }
-            matchesUiFilter && (filter == null || it.rule.kind == filter) &&
+            catalogVisible(it, isSelected, uiFilter) && matchesUiFilter && (filter == null || it.rule.kind == filter) &&
                 (query.isBlank() || it.appLabel.contains(query, true) ||
                     it.activityLabel.contains(query, true) || it.rule.packageName.contains(query, true) ||
                     it.rule.className.contains(query, true))
@@ -123,8 +120,9 @@ fun groupCandidates(candidates: List<ComponentCandidate>, selected: Set<Componen
 
 /** A rule must remain manageable even when a probe, permission or package update hides its target. */
 fun retainConfiguredCandidates(items: List<ComponentCandidate>, selected: Set<ComponentRule>): List<ComponentCandidate> {
-    val ids = items.map { it.rule.id }.toSet()
-    return items + selected.filter { it.id !in ids }.map { rule ->
+    val kept = items.filter { !it.unavailable || it.rule in selected }
+    val ids = kept.map { it.rule.id }.toSet()
+    return kept + selected.filter { it.id !in ids }.map { rule ->
         ComponentCandidate(rule, rule.packageName, rule.className.substringAfterLast('.'),
             evidence = listOf("已配置，但本次未扫描到；不代表已卸载"), unavailable = true)
     }
@@ -136,44 +134,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val updating: StateFlow<Boolean> = mutableUpdating
     private val mutableUpdateMessage = MutableStateFlow<String?>(null)
     val updateMessage: StateFlow<String?> = mutableUpdateMessage
-    private val viewPrefs = application.getSharedPreferences("catalog_view", android.content.Context.MODE_PRIVATE)
     private val candidates = MutableStateFlow<List<ComponentCandidate>>(emptyList())
-    private val showAdvanced = MutableStateFlow(viewPrefs.getBoolean("restricted", false))
-    private val showHistory = MutableStateFlow(viewPrefs.getBoolean("history", false))
     private val mutableFileCheckStatus = MutableStateFlow<String?>(null)
     val fileCheckStatus: StateFlow<String?> = mutableFileCheckStatus
-    fun setShowAdvanced(value: Boolean) {
-        showAdvanced.value = value
-        viewPrefs.edit().putBoolean("restricted", value).apply()
-    }
-    fun setShowHistory(value: Boolean) {
-        showHistory.value = value
-        viewPrefs.edit().putBoolean("history", value).apply()
-    }
+    private val mutableCheckingFile = MutableStateFlow(false)
+    val checkingFile: StateFlow<Boolean> = mutableCheckingFile
 
     fun inspectFile(uri: Uri) {
-        val generation = ++refreshGeneration
-        refreshJob?.cancel()
-        refreshJob = viewModelScope.launch {
-            loading.value = true
+        if (mutableCheckingFile.value) return
+        mutableCheckingFile.value = true
+        viewModelScope.launch {
             mutableFileCheckStatus.value = "正在检查实际文件的候选，不会打开文件…"
-            error.value = null
             try {
                 check(app.synchronize()) { app.runtime.value.message }
                 val found = app.catalog.inspectFile(uri)
                 check(app.synchronize()) { app.runtime.value.message }
-                if (generation == refreshGeneration) {
-                    val foundIds = found.map { it.rule.id }.toSet()
-                    candidates.value = IntentCatalog.merge(found + candidates.value.filter { it.rule.id !in foundIds })
-                    app.catalog.saveKnown(candidates.value, app.rules.rules.value)
-                    mutableFileCheckStatus.value = "本次实际文件查询返回 ${found.size} 个组件，已合并并标注匹配依据"
-                }
+                mutableFileCheckStatus.value = "查询返回 ${found.size} 个组件，其中 ${found.count { !it.restricted }} 个未发现访问限制。结果仅用于诊断，不改变规则列表；明细见诊断包。"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                if (generation == refreshGeneration) mutableFileCheckStatus.value = failure.message ?: "文件检查失败"
+                mutableFileCheckStatus.value = failure.message ?: "文件检查失败"
             } finally {
-                if (generation == refreshGeneration) loading.value = false
+                mutableCheckingFile.value = false
             }
         }
     }
@@ -230,16 +212,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private data class ListContent(val candidates: List<ComponentCandidate>, val filter: IntentKind?, val query: String, val groups: List<AppGroup>, val advanced: Boolean = false,
-        val selected: Set<ComponentRule> = emptySet(), val uiFilter: UiFilter = UiFilter.ALL,
-        val history: Boolean = false)
+    private data class ListContent(val candidates: List<ComponentCandidate>, val filter: IntentKind?, val query: String, val groups: List<AppGroup>,
+        val selected: Set<ComponentRule> = emptySet(), val uiFilter: UiFilter = UiFilter.ALL)
 
-    private data class CatalogView(val items: List<ComponentCandidate>, val restricted: Boolean, val history: Boolean)
-    private val catalogView = combine(candidates, showAdvanced, showHistory) { items, advanced, history -> CatalogView(items, advanced, history) }
-    private val grouped = combine(catalogView, app.rules.rules, filter, query, uiFilter) { view, selected, kind, text, ui ->
-        val items = retainConfiguredCandidates(view.items, selected)
-        val visible = items.filter { catalogVisible(it, selected, view.restricted, view.history) }
-        ListContent(items, kind, text, groupCandidates(visible, selected, kind, text, ui), view.restricted, selected, ui, view.history)
+    private val grouped = combine(candidates, app.rules.rules, filter, query, uiFilter) { scanned, selected, kind, text, ui ->
+        val items = retainConfiguredCandidates(scanned, selected)
+        ListContent(items, kind, text, groupCandidates(items, selected, kind, text, ui), selected, ui)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListContent(emptyList(), null, "", emptyList()))
     
     val state: StateFlow<MainState> = combine(
@@ -256,8 +234,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             displayMode = values[5] as DisplayMode,
             filter = (values[3] as ListContent).filter,
             query = (values[3] as ListContent).query,
-            showAdvanced = (values[3] as ListContent).advanced,
-            showHistory = (values[3] as ListContent).history,
             priorities = values[6] as PriorityConfig,
             groups = (values[3] as ListContent).groups,
             diagnosticMode = values[7] as Boolean,
@@ -283,21 +259,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
-        mutableFileCheckStatus.value = null
         val generation = ++refreshGeneration
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             loading.value = true
             error.value = null
             try {
-                if (candidates.value.isEmpty()) candidates.value = app.catalog.loadKnown()
                 candidates.value = app.catalog.completeConfigured(candidates.value, app.rules.rules.value)
                 check(app.synchronize()) { app.runtime.value.message }
                 val result = app.catalog.scan()
                 check(app.synchronize()) { app.runtime.value.message }
                 if (generation == refreshGeneration) {
-                    candidates.value = IntentCatalog.mergeSnapshot(candidates.value, result, app.rules.rules.value)
-                    app.catalog.saveKnown(candidates.value, app.rules.rules.value)
+                    // Replace the directory, do not accumulate historical scan results.
+                    candidates.value = app.catalog.completeConfigured(result, app.rules.rules.value)
                     error.value = app.catalog.scanWarning
                 }
             } catch (cancelled: CancellationException) {
@@ -498,8 +472,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-internal fun catalogVisible(item: ComponentCandidate, selected: Set<ComponentRule>,
-    restricted: Boolean, history: Boolean): Boolean {
-    if (selected.any { it.id == item.rule.id }) return true
-    return (!item.unavailable || history) && (!item.advanced || restricted)
-}
+internal fun catalogVisible(item: ComponentCandidate, selected: Boolean, uiFilter: UiFilter): Boolean =
+    (!item.unavailable && !item.restricted) || (selected && uiFilter == UiFilter.SHOW_SELECTED)

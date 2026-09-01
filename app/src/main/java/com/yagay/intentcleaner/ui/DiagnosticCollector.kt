@@ -36,7 +36,7 @@ object DiagnosticCollector {
                 val app = context.applicationContext as IntentCleanerApp
                 zip.addText("app/scan-probes.txt", app.catalog.lastReport)
                 zip.addText("app/real-file-probe.txt", app.catalog.lastFileReport)
-                zip.addText("app/catalog-cache.txt", app.catalog.cacheStatus + "\nscanWarning=" + app.catalog.scanWarning)
+                zip.addText("app/catalog-status.txt", "source=current_session_scan\npersistentCatalog=false\nscanWarning=" + app.catalog.scanWarning)
                 val candidateEvidence = DiagnosticBuffer(MAX_TEXT_BYTES)
                 fun appendCandidateLine(line: String) {
                     val bytes = (line + "\n").toByteArray(StandardCharsets.UTF_8)
@@ -44,8 +44,8 @@ object DiagnosticCollector {
                 }
                 appendCandidateLine("UI snapshot; sample matches are not proof of real-file launchability.")
                 state.candidates.forEach { candidate ->
-                    appendCandidateLine("${candidate.rule.id} restricted=${candidate.advanced} broad=${candidate.broadMatch} unavailable=${candidate.unavailable} lastSeen=${candidate.lastSeenMillis}" +
-                        " catalogVisible=${catalogVisible(candidate, state.selected, state.showAdvanced, state.showHistory)}")
+                    appendCandidateLine("${candidate.rule.id} restricted=${candidate.restricted} broad=${candidate.broadMatch} unavailable=${candidate.unavailable}" +
+                        " catalogEligible=${catalogVisible(candidate, candidate.rule in state.selected, state.uiFilter)}")
                     candidate.evidence.forEach { appendCandidateLine("  $it") }
                 }
                 zip.addText("app/scan-candidates.txt", "truncated=${candidateEvidence.truncated()}\n" +
@@ -133,7 +133,7 @@ object DiagnosticCollector {
         appendLine("configDigest=${state.runtime.digest}")
         appendLine("recoveryDecisionRequired=${state.runtime.needsDecision}")
         appendLine("runtimeMessage=${state.runtime.message}")
-        appendLine("uiFilter=${state.uiFilter} category=${state.filter} showAdvanced=${state.showAdvanced} showHistory=${state.showHistory}")
+        appendLine("uiFilter=${state.uiFilter} category=${state.filter}")
         appendLine("searchActive=${state.query.isNotBlank()} candidates=${state.candidates.size} visibleGroups=${state.groups.size}")
         state.module.runningTargets.forEach {
             appendLine("target=${it.processName}|${it.state}|version=${it.version}")

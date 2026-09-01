@@ -22,20 +22,12 @@ import com.yagay.intentcleaner.BuildConfig
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun RulesTab(state: MainState, vm: MainViewModel, onInspectFile: () -> Unit) {
-    val fileCheckStatus by vm.fileCheckStatus.collectAsState()
-    var showScopeDetails by remember { mutableStateOf(false) }
-    if (showScopeDetails) {
-        ScopeDialog(state.module, vm::requestScope, vm::refreshModuleStatus) { showScopeDetails = false }
-    }
+fun RulesTab(state: MainState, vm: MainViewModel) {
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "module-indicator") {
-            ModuleStatusRow(state) {
-                showScopeDetails = true
-                vm.refreshModuleStatus()
-            }
-            RuntimePanel(state, vm)
+            ModuleStatusRow(state, compact = true) { vm.setDestination(Destination.DASHBOARD) }
+            if (state.runtime.needsDecision) RuntimePanel(state, vm, showUpdateTools = false)
         }
         stickyHeader(key = "list-controls") {
             Surface(tonalElevation = 2.dp) {
@@ -44,19 +36,15 @@ fun RulesTab(state: MainState, vm: MainViewModel, onInspectFile: () -> Unit) {
         }
         item(key = "list-summary") {
             SummaryRow(state)
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("显示受限候选", Modifier.weight(1f))
-                Switch(state.showAdvanced, vm::setShowAdvanced)
+            if (state.uiFilter != UiFilter.SHOW_SELECTED && state.candidates.any {
+                    it.rule in state.selected && (it.unavailable || it.restricted)
+                }) {
+                TextButton(onClick = {
+                    vm.setFilter(null)
+                    vm.setQuery("")
+                    vm.setUiFilter(UiFilter.SHOW_SELECTED)
+                }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("查看未匹配的已选规则") }
             }
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("显示历史候选", Modifier.weight(1f))
-                Switch(state.showHistory, vm::setShowHistory)
-            }
-            Text("样例与类型范围匹配不等于实际菜单。未确认历史项默认隐藏，未配置历史最多保留7天；已配置项始终保留管理入口（仍受分类、搜索、已选视图限制）。受限项与历史项可用开关查看，设置重启后保留。",
-                Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-            OutlinedButton(onClick = onInspectFile, enabled = !state.loading,
-                modifier = Modifier.padding(horizontal = 16.dp)) { Text("用实际文件检查打开方式") }
-            fileCheckStatus?.let { Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall) }
         }
         state.groups.forEach { group ->
             val key = "${state.filter?.name ?: "ALL"}|${group.packageName}"
@@ -82,16 +70,13 @@ fun RulesTab(state: MainState, vm: MainViewModel, onInspectFile: () -> Unit) {
 private fun SummaryRow(state: MainState) {
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text("应用列表 · ${state.groups.size}", style = MaterialTheme.typography.labelLarge)
-        Text("计数、标签和应用勾选均仅作用于当前可见匹配组件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("勾选当前分类组件；全部视图不会因勾选而隐藏应用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (state.displayMode == DisplayMode.SHOW_ALL) {
             Text(if (state.runtime.ready) "system 已确认暂停过滤，勾选及排序保留" else "本地已选择暂停，尚未确认系统已应用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         } else if (state.displayMode == DisplayMode.SHOW_SELECTED) {
             Text("未设置勾选的分类暂时显示全部", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         }
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (state.filter == IntentKind.PROCESS_TEXT) {
-            Text("过滤 PROCESS_TEXT 查询；不强制删除应用硬编码或缓存的菜单。该分类允许隐藏全部候选。", style = MaterialTheme.typography.labelSmall)
-        }
+        state.error?.let { Text("本次刷新未完整完成，详情见状态页", color = MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -107,8 +92,11 @@ fun DashboardTabContent(
     onRestore: () -> Unit,
     onExport: () -> Unit,
     collectingDiagnostics: Boolean,
-    onCollectDiagnostics: () -> Unit
+    onCollectDiagnostics: () -> Unit,
+    onInspectFile: () -> Unit
 ) {
+    val fileCheckStatus by vm.fileCheckStatus.collectAsState()
+    val checkingFile by vm.checkingFile.collectAsState()
     var menu by remember { mutableStateOf(false) }
     var showScopeDetails by remember { mutableStateOf(false) }
     if (showScopeDetails) ScopeDialog(state.module, vm::requestScope, vm::refreshModuleStatus) { showScopeDetails = false }
@@ -158,9 +146,15 @@ fun DashboardTabContent(
         }
         Text("运行版本由 LSPosed 提供；配置摘要由 system Hook 确认，不代表所有选择器行为均已验证。首次从 1.4.4 或更早版本迁移需重启；以后可尝试热更新，框架不支持或失败时仍需重启。", style = MaterialTheme.typography.bodySmall)
 
-        Text("诊断日志", style = MaterialTheme.typography.titleMedium)
+        Text("诊断工具", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Text("扫描只用于发现可管理组件，不保证等同于每次实际菜单。非文本分类保留空列表保护；文本允许隐藏全部候选，不处理应用硬编码菜单。", style = MaterialTheme.typography.labelSmall)
+                OutlinedButton(onClick = onInspectFile, enabled = !checkingFile) {
+                    Text(if (checkingFile) "正在检查文件…" else "用实际文件检查打开方式")
+                }
+                fileCheckStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("诊断模式", Modifier.weight(1f))
                     Switch(state.diagnosticMode, vm::setDiagnosticMode)

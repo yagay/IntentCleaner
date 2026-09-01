@@ -24,32 +24,35 @@ class BehaviorRegressionTest {
         assertEquals(0, com.yagay.intentcleaner.data.IntentCatalog.queryFlags(IntentKind.PROCESS_TEXT, false))
     }
 
-    @Test fun historyIsSeparateButSelectedRulesStayManageable() {
+    @Test fun unmatchedRulesOnlyAppearInSelectedView() {
         val old = candidate(IntentKind.BROWSER).copy(unavailable = true)
-        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(old, emptySet(), false, false))
-        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(old, emptySet(), false, true))
-        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(old, setOf(old.rule), false, false))
+        val selected = setOf(old.rule)
+        assertTrue(groupCandidates(listOf(old), selected, null, "", UiFilter.ALL).isEmpty())
+        assertEquals(listOf(old), groupCandidates(listOf(old), selected, null, "", UiFilter.SHOW_SELECTED).single().components)
+        assertTrue(groupCandidates(listOf(old), selected, null, "", UiFilter.HIDE_SELECTED).isEmpty())
+        assertTrue(groupCandidates(listOf(old), emptySet(), null, "", UiFilter.SHOW_SELECTED).isEmpty())
     }
 
-    @Test fun broadEvidenceDoesNotMeanRestricted() {
+    @Test fun broadMatchesRemainNormalButRestrictedRulesNeedSelectedView() {
         val broad = candidate(IntentKind.OPEN).copy(broadMatch = true)
-        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(broad, emptySet(), false, false))
-        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(broad.copy(advanced = true), emptySet(), false, false))
+        assertEquals(1, groupCandidates(listOf(broad), emptySet(), null, "", UiFilter.ALL).size)
+        val restricted = broad.copy(restricted = true)
+        assertTrue(groupCandidates(listOf(restricted), emptySet(), null, "", UiFilter.ALL).isEmpty())
+        assertTrue(groupCandidates(listOf(restricted), setOf(restricted.rule), null, "", UiFilter.ALL).isEmpty())
+        assertEquals(1, groupCandidates(listOf(restricted), setOf(restricted.rule), null, "", UiFilter.SHOW_SELECTED).size)
     }
 
-    @Test fun oldUnselectedHistoryExpiresButConfiguredHistoryDoesNot() {
-        val old = candidate(IntentKind.OPEN).copy(lastSeenMillis = 1L)
-        val now = 8 * 86_400_000L
-        assertTrue(com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(old), emptyList(), now = now).isEmpty())
-        assertEquals(old.rule, com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(old), emptyList(), setOf(old.rule), now).single().rule)
+    @Test fun cancellingMissingRuleDoesNotLeaveHistoricalCandidates() {
+        val old = candidate(IntentKind.OPEN).copy(unavailable = true)
+        assertEquals(listOf(old), retainConfiguredCandidates(listOf(old), setOf(old.rule)))
+        assertTrue(retainConfiguredCandidates(listOf(old), emptySet()).isEmpty())
     }
 
-    @Test fun cancellingARestrictedRuleHasTheSameVisibilityAfterRestart() {
-        val item = candidate(IntentKind.OPEN).copy(advanced = true)
-        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(item, setOf(item.rule), false, false))
-        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(item, emptySet(), false, false))
-        assertFalse(com.yagay.intentcleaner.ui.catalogVisible(item, emptySet(), false, false))
-        assertTrue(com.yagay.intentcleaner.ui.catalogVisible(item, emptySet(), true, false))
+    @Test fun unavailableSelectedRulesStillRespectCategoryAndSearch() {
+        val old = candidate(IntentKind.OPEN).copy(unavailable = true)
+        assertTrue(groupCandidates(listOf(old), setOf(old.rule), IntentKind.BROWSER, "", UiFilter.SHOW_SELECTED).isEmpty())
+        assertTrue(groupCandidates(listOf(old), setOf(old.rule), null, "no match", UiFilter.SHOW_SELECTED).isEmpty())
+        assertEquals(1, groupCandidates(listOf(old), setOf(old.rule), IntentKind.OPEN, "example", UiFilter.SHOW_SELECTED).size)
     }
 
     @Test fun relativeStoredRuleUsesCanonicalIdentity() {
@@ -63,20 +66,19 @@ class BehaviorRegressionTest {
             groupCandidates(listOf(item), setOf(item.rule), IntentKind.BROWSER, "", UiFilter.ALL))
     }
 
-    @Test fun missingFreshMatchRetainsLabelAndRule() {
-        val item = candidate(IntentKind.BROWSER, label = "Browser name")
-        val merged = com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(item), emptyList())
-        assertEquals(item.rule, merged.single().rule)
-        assertEquals("Browser name", merged.single().appLabel)
-        assertTrue(merged.single().unavailable)
-        assertEquals(1, groupCandidates(merged, emptySet(), IntentKind.BROWSER, "Browser name", UiFilter.ALL).size)
+    @Test fun freshScanDoesNotBringBackUnselectedOldItems() {
+        val old = candidate(IntentKind.BROWSER)
+        val fresh = candidate(IntentKind.OPEN)
+        val selected = setOf(old.rule)
+        val replacement = retainConfiguredCandidates(listOf(fresh), selected)
+        assertEquals(2, replacement.size)
+        assertTrue(replacement.single { it.rule == old.rule }.unavailable)
+        assertEquals(listOf(fresh), retainConfiguredCandidates(listOf(fresh), emptySet()))
     }
 
-    @Test fun freshMatchReplacesHistoricalMetadata() {
-        val old = candidate(IntentKind.OPEN).copy(unavailable = true)
-        val fresh = old.copy(appLabel = "Updated", unavailable = false)
-        val merged = com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(old), listOf(fresh))
-        assertEquals(listOf(fresh), merged)
+    @Test fun matchingSelectedRuleDoesNotCreateDuplicatePlaceholder() {
+        val fresh = candidate(IntentKind.OPEN)
+        assertEquals(listOf(fresh), retainConfiguredCandidates(listOf(fresh), setOf(fresh.rule)))
     }
 
     private fun candidate(kind: IntentKind, pkg: String = "com.example", label: String = "Example") =

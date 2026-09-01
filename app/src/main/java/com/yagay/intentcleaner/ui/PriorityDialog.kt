@@ -39,7 +39,7 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
     }
     
     val available = apps.keys.filter { packageName ->
-        packageName !in rankedRaw && apps.getValue(packageName).any { !it.unavailable && !it.advanced } &&
+        packageName !in rankedRaw && apps.getValue(packageName).any { !it.unavailable && !it.restricted } &&
             (state.query.isBlank() || packageName.contains(state.query, true) ||
             apps.getValue(packageName).first().appLabel.contains(state.query, true))
     }.sortedBy { apps.getValue(it).first().appLabel.lowercase() }

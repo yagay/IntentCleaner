@@ -43,10 +43,9 @@ data class ComponentCandidate(
     val activityLabel: String,
     val appIcon: Bitmap? = null,
     val evidence: List<String> = emptyList(),
-    val advanced: Boolean = false,
+    val restricted: Boolean = false,
     val unavailable: Boolean = false,
-    val broadMatch: Boolean = false,
-    val lastSeenMillis: Long = 0L
+    val broadMatch: Boolean = false
 )
 
 @Serializable

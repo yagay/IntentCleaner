@@ -79,8 +79,8 @@ import com.yagay.intentcleaner.domain.ComponentRule
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val historical = group.components.count { it.unavailable }
-                if (historical > 0) Text("含 $historical 个历史／未确认组件", style = MaterialTheme.typography.labelSmall,
+                val missing = group.components.count { it.unavailable || it.restricted }
+                if (missing > 0) Text("含 $missing 条当前不可用规则", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error)
             }
             IconButton(onClick = onExpand) {
@@ -130,15 +130,9 @@ import com.yagay.intentcleaner.domain.ComponentRule
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (item.unavailable) Text("保留管理入口 · 本次匹配未确认", style = MaterialTheme.typography.labelSmall,
+                    if (item.unavailable) Text("当前未找到组件 · 可取消规则", style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error)
-                    else if (item.advanced) Text("受限候选 · 权限或组件状态受限", style = MaterialTheme.typography.labelSmall)
-                    if (item.broadMatch) Text("类型范围匹配 · 尚未通过具体文件确认", style = MaterialTheme.typography.labelSmall)
-                    item.evidence.take(3).forEach { reason ->
-                        Text(reason, style = MaterialTheme.typography.labelSmall, maxLines = 2,
-                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (item.evidence.size > 3) Text("另有 ${item.evidence.size - 3} 条匹配依据，见诊断包", style = MaterialTheme.typography.labelSmall)
+                    else if (item.restricted) Text("当前组件访问受限 · 可取消规则", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }

@@ -146,7 +146,7 @@ internal fun ListControls(state: MainState, onFilter: (IntentKind?) -> Unit, onU
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("视图过滤", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("查看", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Box {
                 TextButton(onClick = { menu = true }) {
                     Text(state.uiFilter.title)
@@ -167,7 +167,7 @@ internal fun ListControls(state: MainState, onFilter: (IntentKind?) -> Unit, onU
 }
 
 @Composable
-internal fun ModuleStatusRow(state: MainState, onClick: () -> Unit) {
+internal fun ModuleStatusRow(state: MainState, compact: Boolean = false, onClick: () -> Unit) {
     val status = state.module
     val title = when {
         !status.connected -> "LSPosed 未连接"
@@ -180,7 +180,7 @@ internal fun ModuleStatusRow(state: MainState, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.labelLarge)
-            Text(state.syncStatus, style = MaterialTheme.typography.labelSmall,
+            Text(if (!compact) state.syncStatus else if (state.runtime.ready) "系统已确认配置" else "需要检查配置，点击查看状态", style = MaterialTheme.typography.labelSmall,
                 color = if (status.outdated || !state.runtime.ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Icon(Icons.Rounded.ExpandMore, "查看模块状态")
