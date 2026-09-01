@@ -10,11 +10,13 @@ data class ModuleConfig(
     val priorities: PriorityConfig,
     val diagnostic: Boolean,
     // Supplied by our own app via framework-owned remote preferences, never by an Intent extra.
-    val managerAppId: Int = -1
+    val managerAppId: Int = -1,
+    val tiles: TileConfig = TileConfig()
 ) {
     fun validated(): ModuleConfig {
         require(rules.size <= 20_000 && rules.all(ComponentRule::isValid))
         priorities.validated()
+        tiles.validated()
         require(managerAppId == -1 || ManagerIdentity.valid(managerAppId))
         return this
     }

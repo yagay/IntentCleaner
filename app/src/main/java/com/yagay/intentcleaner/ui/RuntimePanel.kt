@@ -14,7 +14,7 @@ internal fun RuntimePanel(state: MainState, vm: MainViewModel, showUpdateTools: 
     if (confirmReset) AlertDialog(
         onDismissRequest = { confirmReset = false },
         title = { Text("重置远程清理配置？") },
-        text = { Text("将清空规则和排序，并暂停过滤。旧 Hook 未退出时，系统效果仍可能保留；必须等待系统确认。如需保留旧规则，请取消，先恢复远程配置并导出 JSON 备份。") },
+        text = { Text("将清空 Intent 规则、排序及磁贴清理配置，并暂停过滤。旧 Hook 未退出时，系统效果仍可能保留；必须等待系统确认。如需保留旧规则，请取消，先恢复远程配置并导出 JSON 备份。") },
         confirmButton = { TextButton(onClick = { confirmReset = false; vm.resolveRecovery(false) }) { Text("确认重置") } },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } }
     )

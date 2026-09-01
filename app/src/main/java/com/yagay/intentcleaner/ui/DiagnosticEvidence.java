@@ -38,6 +38,12 @@ public final class DiagnosticEvidence {
                 line.contains(" HOOK_INSTALLED ") ? "hookInstalled" :
                 line.contains(" QUERY ") ? "queryObserved" :
                 line.contains(" ORDER_APPLIED ") ? "orderObserved" :
+                line.contains(" TILE_HOOK_INSTALLED ") ? "tileHookInstalled" :
+                line.contains(" TILE_CONFIG ") ? "tileConfigRead" :
+                line.contains(" TILE_EDITOR_SEEN ") ? "tileEditorSeen" :
+                line.contains(" TILE_FILTERED ") ? "tileFilterObserved" :
+                line.contains(" TILE_UNSUPPORTED ") ? "tileUnsupported" :
+                line.contains(" TILE_FAILED ") || line.contains(" TILE_RESTORE_FAILED ") ? "tileFailed" :
                 line.contains(" ORDER_RESULT ") ? (line.contains("changed=true") ? "orderChanged" : "orderUnchanged") :
                 line.contains(" ORDER_DELIVERED ") ? "orderDeliveredNotUiVerified" :
                 line.contains(" ORDER_HOOK_INSTALLED ") ? "orderHookInstalled" :

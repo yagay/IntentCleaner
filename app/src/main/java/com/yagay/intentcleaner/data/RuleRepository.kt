@@ -7,6 +7,7 @@ import com.yagay.intentcleaner.domain.DisplayMode
 import com.yagay.intentcleaner.domain.PriorityConfig
 import com.yagay.intentcleaner.domain.IntentKind
 import com.yagay.intentcleaner.domain.ModuleConfig
+import com.yagay.intentcleaner.domain.TileConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,10 @@ class RuleRepository(context: Context) {
         json.decodeFromString(PriorityConfig.serializer(), prefs.getString(KEY_PRIORITIES, null) ?: "{}").validated()
     }.getOrDefault(PriorityConfig()))
     private val mutableDiagnostic = MutableStateFlow(prefs.getBoolean(KEY_DIAGNOSTIC, false))
+    private val mutableTiles = MutableStateFlow(runCatching {
+        json.decodeFromString(TileConfig.serializer(), prefs.getString(KEY_TILES, null) ?: "{}").validated()
+    }.getOrDefault(TileConfig()))
+    val tiles: StateFlow<TileConfig> = mutableTiles.asStateFlow()
 
     val rules: StateFlow<Set<ComponentRule>> = mutableRules.asStateFlow()
     val displayMode: StateFlow<DisplayMode> = mutableMode.asStateFlow()
@@ -33,21 +38,28 @@ class RuleRepository(context: Context) {
 
     // Existing installations may have deliberately empty rules; key presence, not count, matters.
     fun hasLocalConfiguration(): Boolean = prefs.contains(KEY_INITIALIZED) || prefs.contains(KEY_RULES) ||
-        prefs.contains(KEY_DISPLAY_MODE) || prefs.contains(KEY_BLACKLIST) || prefs.contains(KEY_PRIORITIES)
+        prefs.contains(KEY_DISPLAY_MODE) || prefs.contains(KEY_BLACKLIST) || prefs.contains(KEY_PRIORITIES) || prefs.contains(KEY_TILES)
 
     fun markInitialized() { prefs.edit().putBoolean(KEY_INITIALIZED, true).apply() }
 
     @Synchronized fun restoreRemote(config: ModuleConfig) {
         config.validated()
-        replace(config.rules, config.mode != DisplayMode.SHOW_SELECTED, config.priorities, config.mode)
+        replace(config.rules, config.mode != DisplayMode.SHOW_SELECTED, config.priorities, config.mode, config.tiles)
         setDiagnosticMode(config.diagnostic)
         markInitialized()
     }
 
     @Synchronized fun remoteSnapshot(): ModuleConfig = ModuleConfig(
         mutableRules.value.toSet(), mutableMode.value, mutablePriorities.value,
-        mutableDiagnostic.value, android.os.Process.myUid() % 100_000
+        mutableDiagnostic.value, android.os.Process.myUid() % 100_000, mutableTiles.value
     )
+
+    @Synchronized fun setTiles(value: TileConfig) {
+        value.validated()
+        prefs.edit().putString(KEY_TILES, json.encodeToString(TileConfig.serializer(), value)).apply()
+        mutableTiles.value = value
+        mutableRevision.value++
+    }
 
     @Synchronized
 
@@ -92,32 +104,35 @@ class RuleRepository(context: Context) {
     }
 
     @Synchronized
-    fun replace(rules: Set<ComponentRule>, blacklist: Boolean, priorities: PriorityConfig = PriorityConfig(), displayMode: DisplayMode = DisplayMode.fromStored(null, blacklist)) {
+    fun replace(rules: Set<ComponentRule>, blacklist: Boolean, priorities: PriorityConfig = PriorityConfig(), displayMode: DisplayMode = DisplayMode.fromStored(null, blacklist), tiles: TileConfig = TileConfig()) {
         require(rules.size <= MAX_RULES) { "备份规则数量过多" }
         require(rules.all(ComponentRule::isValid)) { "备份包含无效组件" }
         priorities.validated()
+        tiles.validated()
         mutableRules.value = rules.mapNotNull { ComponentRule.fromId(it.id) }.toSet()
         mutableMode.value = displayMode
         mutablePriorities.value = priorities
+        mutableTiles.value = tiles
         prefs.edit()
             .putStringSet(KEY_RULES, rules.map(ComponentRule::id).toSet())
             .putBoolean(KEY_BLACKLIST, blacklist)
             .putString(KEY_DISPLAY_MODE, displayMode.name)
             .putString(KEY_PRIORITIES, encodePriorities(priorities))
+            .putString(KEY_TILES, json.encodeToString(TileConfig.serializer(), tiles))
             .apply()
         mutableRevision.value++
     }
 
     @Synchronized fun exportJson(): String = json.encodeToString(
         RuleBackup.serializer(),
-        RuleBackup(version = 3, blacklist = mutableMode.value != DisplayMode.SHOW_SELECTED, rules = mutableRules.value, priorities = mutablePriorities.value, displayMode = mutableMode.value)
+        RuleBackup(version = 4, blacklist = mutableMode.value != DisplayMode.SHOW_SELECTED, rules = mutableRules.value, priorities = mutablePriorities.value, displayMode = mutableMode.value, tiles = mutableTiles.value)
     )
 
     fun importJson(content: String) {
         require(content.length <= MAX_BACKUP_CHARS) { "备份文件过大" }
         val backup = json.decodeFromString(RuleBackup.serializer(), content)
-        require(backup.version in 1..3) { "不支持的备份版本：${backup.version}" }
-        replace(backup.rules, backup.blacklist, if (backup.version == 1) PriorityConfig() else backup.priorities, if (backup.version >= 3) requireNotNull(backup.displayMode) { "备份缺少显示模式" } else DisplayMode.fromStored(null, backup.blacklist))
+        require(backup.version in 1..4) { "不支持的备份版本：${backup.version}" }
+        replace(backup.rules, backup.blacklist, if (backup.version == 1) PriorityConfig() else backup.priorities, if (backup.version >= 3) requireNotNull(backup.displayMode) { "备份缺少显示模式" } else DisplayMode.fromStored(null, backup.blacklist), if (backup.version >= 4) backup.tiles else TileConfig())
     }
 
     private fun updateRules(next: Set<ComponentRule>) {
@@ -135,6 +150,7 @@ class RuleRepository(context: Context) {
         const val KEY_PRIORITIES = "priority_apps"
         const val KEY_DIAGNOSTIC = "diagnostic_mode"
         const val KEY_CONFIG = "config_v1"
+        const val KEY_TILES = "tile_config"
         val SYNCED_KEYS = setOf(KEY_RULES, KEY_BLACKLIST, KEY_DISPLAY_MODE, KEY_PRIORITIES, KEY_DIAGNOSTIC)
         private const val LOCAL_PREFS = "rules_local"
         private const val KEY_INITIALIZED = "configuration_initialized"

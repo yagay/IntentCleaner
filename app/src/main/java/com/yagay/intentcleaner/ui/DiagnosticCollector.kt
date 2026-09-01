@@ -25,13 +25,22 @@ object DiagnosticCollector {
     private const val MAX_LSPOSED_FILES = 12
     private const val MAX_LSPOSED_FILE_BYTES = 4 * 1024 * 1024
 
-    suspend fun collect(context: Context, state: MainState): File = runInterruptible(Dispatchers.IO) {
+    suspend fun collect(context: Context, state: MainState, tiles: com.yagay.intentcleaner.data.TileScan? = null): File = runInterruptible(Dispatchers.IO) {
         val output = File.createTempFile("Intentcleaner-diagnostic-", ".zip", context.cacheDir)
         try {
             ZipOutputStream(BufferedOutputStream(FileOutputStream(output))).use { zip ->
                 zip.addText("README.txt", readme())
                 zip.addText("app/module-state.txt", moduleState(state))
                 zip.addText("app/rules.txt", rules(state))
+                zip.addText("app/tiles.txt", buildString {
+                    appendLine("source=last_manager_scan_not_live_editor")
+                    appendLine("observedAtMillis=${tiles?.observedAtMillis ?: 0}")
+                    appendLine("warning=${tiles?.warning ?: "not_scanned"}")
+                    appendLine("count=${tiles?.items?.size ?: 0} limit=2000")
+                    tiles?.items?.take(2000)?.forEach {
+                        appendLine("${it.spec} | ${it.label.take(256)} | ${it.owner.take(256)} | hidden=${it.spec in state.tiles.hidden}")
+                    }
+                })
                 zip.addText("device/system-info.txt", systemInfo())
                 val app = context.applicationContext as IntentCleanerApp
                 zip.addText("app/scan-probes.txt", app.catalog.lastReport)
@@ -67,6 +76,7 @@ object DiagnosticCollector {
                 zip.addCapture("device/processes.txt", root("ps -A -o USER,PID,PPID,NAME", 1024 * 1024))
                 zip.addCapture("app/installed-package.txt", root("dumpsys package com.yagay.intentcleaner", 2 * 1024 * 1024))
                 zip.addCapture("app/resolver-package.txt", root("dumpsys package com.android.intentresolver", 2 * 1024 * 1024))
+                zip.addCapture("app/systemui-package.txt", root("dumpsys package com.android.systemui", 2 * 1024 * 1024))
                 zip.addCapture("root/lsposed-modules.txt", root(
                     "for d in /data/adb/modules/*; do [ -d \"\$d\" ] || continue; " +
                         "echo ===\$(basename \"\$d\")===; " +
@@ -124,6 +134,7 @@ object DiagnosticCollector {
         appendLine("grantedScope=${state.module.grantedScope.sorted().joinToString()}")
         appendLine("missingScope=${state.module.missingScope.sorted().joinToString()}")
         appendLine("displayMode=${state.displayMode.name}")
+        appendLine("tileCleaningEnabled=${state.tiles.enabled} hiddenTiles=${state.tiles.hidden.size}")
         appendLine("diagnosticMode=${state.diagnosticMode}")
         appendLine("syncStatus=${state.syncStatus}")
         appendLine("systemConfigAcknowledged=${state.runtime.ready}")
@@ -152,6 +163,8 @@ object DiagnosticCollector {
         state.priorities.apps.entries.sortedBy { it.key.ordinal }.forEach { (kind, packages) ->
             appendLine("${kind.name}=${packages.joinToString()}")
         }
+        appendLine("tilesEnabled=${state.tiles.enabled}")
+        state.tiles.hidden.sorted().forEach { appendLine("hiddenTile=$it") }
     }
 
     private fun systemInfo(): String = buildString {

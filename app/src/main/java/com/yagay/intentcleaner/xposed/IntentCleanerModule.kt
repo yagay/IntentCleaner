@@ -30,6 +30,7 @@ import com.yagay.intentcleaner.domain.ModuleConfig
 import com.yagay.intentcleaner.domain.FilterPolicy
 import com.yagay.intentcleaner.domain.intentKind
 import com.yagay.intentcleaner.domain.ManagerIdentity
+import com.yagay.intentcleaner.domain.TileConfig
 import kotlinx.serialization.json.Json
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
@@ -46,7 +47,8 @@ class IntentCleanerModule : XposedModule() {
         val priorities: PriorityConfig,
         val diagnostic: Boolean,
         val managerAppId: Int = -1,
-        val digest: String = ""
+        val digest: String = "",
+        val tiles: TileConfig = TileConfig()
     ) {
         val selectedKinds: Set<IntentKind> = selectedKinds(configured)
         fun hasSelection(kind: IntentKind): Boolean = kind in selectedKinds
@@ -70,6 +72,7 @@ class IntentCleanerModule : XposedModule() {
     private val queryInProgress = ThreadLocal<Boolean>()
     private val installedMethods = ConcurrentHashMap.newKeySet<String>()
     private val tracedActions = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var tileFlowInstalled = false
 
     private val preferences by lazy(LazyThreadSafetyMode.PUBLICATION) {
         getRemotePreferences(RuleRepository.REMOTE_PREFS)
@@ -91,6 +94,12 @@ class IntentCleanerModule : XposedModule() {
     }
 
     @Synchronized override fun onHotReloading(param: HotReloadingParam): Boolean {
+        // SystemUI may cache Flow proxies holding this generation's callbacks. Do not leave
+        // those alive beside new code; configuration changes still update without code reload.
+        if (tileFlowInstalled) {
+            record("TILE_HOT_RELOAD_RESTART_REQUIRED reason=cached_flow_callbacks")
+            return false
+        }
         // No module-owned threads/native hooks. Never transfer old-generation objects.
         if (listenerRegistered) {
             preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
@@ -109,8 +118,10 @@ class IntentCleanerModule : XposedModule() {
             // whole-generation rollback, but avoids destructive changes on an unusable set.
             check(param.oldHookHandles.any { handle ->
                 val method = handle.executable as? Method
-                handle.id == "$HOOK_ID-${if (systemServer) "system" else "resolver"}" &&
-                    method != null && isQueryIntentActivitiesMethod(method)
+                (handle.id == "$HOOK_ID-${if (systemServer) "system" else "resolver"}" &&
+                    method != null && isQueryIntentActivitiesMethod(method)) ||
+                    (!systemServer && processName.startsWith(SYSTEM_UI_PACKAGE) && method != null &&
+                        handle.id in setOf("ic-tile-legacy", "ic-tile-flow"))
             }) { "No compatible query handle; restart required" }
             initializePreferences()
             param.oldHookHandles.forEach { handle ->
@@ -134,6 +145,11 @@ class IntentCleanerModule : XposedModule() {
                         handle.replaceHook(alphabeticalOrderHooker())
                         installedMethods.add("ALPHA#${method.toGenericString()}")
                     }
+                    method != null && handle.id in setOf("ic-tile-legacy", "ic-tile-flow") -> {
+                        handle.replaceHook(if (handle.id == "ic-tile-legacy") tileLegacyHooker() else tileFlowHooker())
+                        if (handle.id == "ic-tile-flow") tileFlowInstalled = true
+                        installedMethods.add("TILE#${method.toGenericString()}")
+                    }
                     else -> handle.unhook()
                 }
             }
@@ -144,12 +160,19 @@ class IntentCleanerModule : XposedModule() {
                     .getDeclaredMethod("currentApplication").invoke(null) as? Context
                 application?.classLoader?.let(loaders::add)
             }.onFailure { record("ORDER_LOADER_UNAVAILABLE error=${it.javaClass.name}") }
-            loaders.forEach { if (systemServer) installSystemServerQueryHooks(it) else installResolverClientHooks(it) }
-            check(installedMethods.any { it.endsWith(if (systemServer) "@SYSTEM" else "@RESOLVER") }) {
+            loaders.forEach {
+                if (systemServer) installSystemServerQueryHooks(it)
+                else if (processName.startsWith(SYSTEM_UI_PACKAGE)) installTileHooks(it)
+                else installResolverClientHooks(it)
+            }
+            check(installedMethods.any {
+                if (!systemServer && processName.startsWith(SYSTEM_UI_PACKAGE)) it.startsWith("TILE#")
+                else it.endsWith(if (systemServer) "@SYSTEM" else "@RESOLVER")
+            }) {
                 "No query hooks after reload; restart required"
             }
             record("HOT_RELOAD_READY version=${BuildConfig.VERSION_CODE} hooks=${installedMethods.size}")
-            if (!systemServer) recordOrderingCapability()
+            if (!systemServer && !processName.startsWith(SYSTEM_UI_PACKAGE)) recordOrderingCapability()
         } catch (failure: Throwable) {
             // Per-hook replacement is atomic, the whole set is not. Do not report success on partial failure.
             record("HOT_RELOAD_FAILED version=${BuildConfig.VERSION_CODE} error=${failure.javaClass.name}")
@@ -182,6 +205,70 @@ class IntentCleanerModule : XposedModule() {
         if (param.packageName == FRAMEWORK_PACKAGE || param.packageName == INTENT_RESOLVER_PACKAGE) {
             installResolverClientHooks(param.classLoader)
         }
+        if (param.packageName == SYSTEM_UI_PACKAGE) installTileHooks(param.classLoader)
+    }
+
+    private fun installTileHooks(loader: ClassLoader) {
+        listOf(
+            Triple("com.android.systemui.qs.customize.TileAdapter", "recalcSpecs", "ic-tile-legacy"),
+            Triple("com.android.systemui.qs.panels.ui.viewmodel.EditModeViewModel", "getTiles", "ic-tile-flow")
+        ).forEach { (name, methodName, id) ->
+            runCatching {
+                val method = Class.forName(name, false, loader).getDeclaredMethod(methodName)
+                check(if (id == "ic-tile-legacy") method.returnType == Void.TYPE
+                    else method.returnType.name == "kotlinx.coroutines.flow.Flow")
+                val key = "TILE#${method.toGenericString()}"
+                if (installedMethods.add(key)) {
+                    try {
+                        hook(method).setId(id).intercept(if (id == "ic-tile-legacy") tileLegacyHooker() else tileFlowHooker())
+                        if (id == "ic-tile-flow") tileFlowInstalled = true
+                        record("TILE_HOOK_INSTALLED adapter=$name method=$methodName")
+                    } catch (failure: Throwable) { installedMethods.remove(key); throw failure }
+                }
+            }.onFailure { record("TILE_UNSUPPORTED adapter=$name error=${it.javaClass.name}") }
+        }
+        record("TILE_CAPABILITY hooks=${installedMethods.count { it.startsWith("TILE#") }} execution=unverified")
+    }
+
+    private fun tileLegacyHooker() = XposedInterface.Hooker { chain ->
+        pollPreferences()
+        val current = snapshot
+        diagnostic("TILE_EDITOR_SEEN stage=legacy enabled=${current.tiles.enabled} hidden=${current.tiles.hidden.size} digest=${current.digest}")
+        val change = if (!current.tiles.enabled || current.tiles.hidden.isEmpty() ||
+            Looper.myLooper() != Looper.getMainLooper()) null else runCatching {
+            TileEditorAccess.prepareLegacyHierarchy(requireNotNull(chain.thisObject), current.tiles.hidden)
+        }.getOrElse { diagnostic("TILE_FAILED stage=legacy error=${it.javaClass.name}"); null }
+        val applied = change != null && runCatching { change.apply(); true }.getOrElse {
+            diagnostic("TILE_FAILED stage=apply error=${it.javaClass.name}"); false
+        }
+        try {
+            val result = chain.proceed()
+            if (applied) diagnostic("TILE_FILTERED stage=legacy removed=${change!!.removed} digest=${current.digest} fixed=preserved")
+            result
+        } finally {
+            // Restore the complete discovery list; reopening after disabling restores all tiles.
+            if (applied) runCatching { change!!.restore() }.onFailure {
+                record("TILE_RESTORE_FAILED error=${it.javaClass.name}")
+            }
+        }
+    }
+
+    private fun tileFlowHooker() = XposedInterface.Hooker { chain ->
+        val original = chain.proceed()
+        if (original == null) null else runCatching {
+            val loader = requireNotNull(chain.thisObject).javaClass.classLoader
+            val flow = Class.forName("kotlinx.coroutines.flow.Flow", false, loader)
+            val collector = Class.forName("kotlinx.coroutines.flow.FlowCollector", false, loader)
+            TileEditorAccess.wrapFlow(original, flow, collector) { list ->
+                pollPreferences()
+                val current = snapshot
+                if (!current.tiles.enabled || current.tiles.hidden.isEmpty()) list else runCatching {
+                    TileEditorAccess.filterModern(list, current.tiles.hidden).also {
+                        diagnostic("TILE_FILTERED stage=flow removed=${list.size - it.size} digest=${current.digest} fixed=preserved")
+                    }
+                }.getOrElse { diagnostic("TILE_FAILED stage=flow error=${it.javaClass.name}"); list }
+            }
+        }.getOrElse { diagnostic("TILE_FAILED stage=wrap error=${it.javaClass.name}"); original }
     }
 
     /** Hook the PackageManager binder boundary, not every similarly named PMS method. */
@@ -550,10 +637,11 @@ class IntentCleanerModule : XposedModule() {
                 if (snapshot.digest == digest) return@runCatching
                 val config = Json { ignoreUnknownKeys = true }.decodeFromString(ModuleConfig.serializer(), encoded).validated()
                 snapshot = RuleSnapshot(config.rules.map { it.id }.toSet(), config.mode,
-                    config.priorities, config.diagnostic, config.managerAppId, digest)
+                    config.priorities, config.diagnostic, config.managerAppId, digest, config.tiles)
                 lastEncodedConfig = encoded
                 record("MANAGER_IDENTITY appId=${config.managerAppId} source=remote_config")
                 record("RULES_READ reason=$reason count=${snapshot.configured.size} mode=${config.mode} diagnostic=${config.diagnostic} atomic=true priorities=${config.priorities.apps.mapValues { it.value.size }} digest=$digest")
+                record("TILE_CONFIG enabled=${config.tiles.enabled} hidden=${config.tiles.hidden.size} digest=$digest")
                 return@runCatching
             }
             val rules = preferences.getStringSet(RuleRepository.KEY_RULES, emptySet()).orEmpty().toSet()
@@ -618,6 +706,7 @@ class IntentCleanerModule : XposedModule() {
         const val HOOK_ID = "ic-query-filter"
         const val FRAMEWORK_PACKAGE = "android"
         const val INTENT_RESOLVER_PACKAGE = "com.android.intentresolver"
+        const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         const val PER_USER_RANGE = 100_000
         val SYSTEM_QUERY_CLASSES = listOf(
             "com.android.server.pm.PackageManagerService\$IPackageManagerImpl",

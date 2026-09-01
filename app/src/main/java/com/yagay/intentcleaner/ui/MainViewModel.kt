@@ -8,6 +8,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.List
 import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.material.icons.rounded.GridView
+import com.yagay.intentcleaner.domain.TileConfig
+import com.yagay.intentcleaner.domain.TilePolicy
+import com.yagay.intentcleaner.data.TileCatalog
+import com.yagay.intentcleaner.data.TileScan
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yagay.intentcleaner.IntentCleanerApp
@@ -65,6 +70,7 @@ data class ModuleStatus(
 enum class Destination(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     RULES("规则", Icons.Rounded.List),
     PRIORITY("排序", Icons.Rounded.Sort),
+    TILES("磁贴", Icons.Rounded.GridView),
     DASHBOARD("状态", Icons.Rounded.Dashboard)
 }
 
@@ -87,6 +93,7 @@ data class MainState(
     val uiFilter: UiFilter = UiFilter.ALL,
     val diagnosticMode: Boolean = false,
     val priorities: PriorityConfig = PriorityConfig(),
+    val tiles: TileConfig = TileConfig(),
     val groups: List<AppGroup> = emptyList(),
     val destination: Destination = Destination.RULES,
     val expandedAppKey: String? = null,
@@ -128,6 +135,43 @@ fun retainConfiguredCandidates(items: List<ComponentCandidate>, selected: Set<Co
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as IntentCleanerApp
+    private val mutableTileScan = MutableStateFlow(TileScan(emptyList(), "尚未扫描"))
+    val tileScan: StateFlow<TileScan> = mutableTileScan
+    private val mutableTilesLoading = MutableStateFlow(false)
+    val tilesLoading: StateFlow<Boolean> = mutableTilesLoading
+    private var tileScanJob: kotlinx.coroutines.Job? = null
+
+    fun refreshTiles() {
+        if (tileScanJob?.isActive == true) return
+        tileScanJob = viewModelScope.launch {
+            mutableTilesLoading.value = true
+            try {
+                mutableTileScan.value = withContext(Dispatchers.IO) { TileCatalog(app).scan() }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                mutableTileScan.value = mutableTileScan.value.copy(warning = "磁贴扫描失败：${failure.javaClass.simpleName}")
+            } finally { mutableTilesLoading.value = false }
+        }
+        refreshModuleStatus()
+    }
+
+    fun setTilesEnabled(enabled: Boolean) {
+        if (!canEdit()) return
+        app.rules.setTiles(app.rules.tiles.value.copy(enabled = enabled))
+        refreshModuleStatus()
+    }
+
+    fun setTileHidden(spec: String, hidden: Boolean) {
+        if (!canEdit()) return
+        val id = TilePolicy.canonical(spec) ?: return
+        val current = app.rules.tiles.value
+        if (hidden && id !in current.hidden && current.hidden.size >= 512) {
+            error.value = "磁贴清理最多512项"; return
+        }
+        app.rules.setTiles(current.copy(hidden = if (hidden) current.hidden + id else current.hidden - id))
+    }
+
+    fun clearTileRules() { if (canEdit()) app.rules.setTiles(app.rules.tiles.value.copy(hidden = emptySet())) }
     private val mutableUpdating = MutableStateFlow(false)
     val updating: StateFlow<Boolean> = mutableUpdating
     private val mutableUpdateMessage = MutableStateFlow<String?>(null)
@@ -189,10 +233,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val config = app.rules.remoteSnapshot()
                 report = DiagnosticCollector.collect(app, state.value.copy(
                     module = freshStatus, selected = config.rules, displayMode = config.mode,
-                    priorities = config.priorities, diagnosticMode = config.diagnostic,
+                    priorities = config.priorities, diagnosticMode = config.diagnostic, tiles = config.tiles,
                     runtime = app.runtime.value,
                     syncStatus = app.syncStatus.value
-                ))
+                ), mutableTileScan.value)
                 val ready = requireNotNull(report)
                 withContext(Dispatchers.IO) {
                     val output = app.contentResolver.openOutputStream(uri, "wt") ?: error("无法创建诊断包")
@@ -219,7 +263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListContent(emptyList(), null, "", emptyList()))
     
     val state: StateFlow<MainState> = combine(
-        moduleStatus, loading, error, grouped, app.runtime, app.rules.displayMode, app.rules.priorities, app.rules.diagnosticMode, app.syncStatus, destination, expandedAppKey
+        moduleStatus, loading, error, grouped, app.runtime, app.rules.displayMode, app.rules.priorities, app.rules.diagnosticMode, app.syncStatus, destination, expandedAppKey, app.rules.tiles
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         MainState(
@@ -238,6 +282,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             syncStatus = values[8] as String,
             destination = values[9] as Destination,
             expandedAppKey = values[10] as String?,
+            tiles = values[11] as TileConfig,
             uiFilter = (values[3] as ListContent).uiFilter
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainState())
@@ -353,7 +398,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun readModuleStatus(service: XposedService?): ModuleStatus {
         val generation = ++statusGeneration
         val status = withContext(Dispatchers.IO) {
-            val detection = scopeDetector.detect()
+            val detection = scopeDetector.detect(includeTiles = app.rules.tiles.value.enabled)
             var result = ModuleStatus(connected = service != null, detection = detection)
             if (service != null) {
                 try {

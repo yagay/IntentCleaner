@@ -25,6 +25,13 @@ public final class DiagnosticEvidenceCheck {
                 !ordering.contains("orderChanged kind=OPEN events=1") ||
                 !ordering.contains("orderSkipped events=1") || !ordering.contains("orderFailed events=1") ||
                 !ordering.contains("orderDeliveredNotUiVerified events=1")) throw new AssertionError(ordering);
+        order.accept("test", prefix + "TILE_HOOK_INSTALLED adapter=fixture");
+        order.accept("test", prefix + "TILE_EDITOR_SEEN stage=legacy");
+        order.accept("test", prefix + "TILE_FILTERED removed=1");
+        order.accept("test", prefix + "TILE_UNSUPPORTED adapter=other");
+        String tileReport = order.report();
+        if (!tileReport.contains("tileHookInstalled events=1") || !tileReport.contains("tileEditorSeen events=1") ||
+                !tileReport.contains("tileFilterObserved events=1") || !tileReport.contains("tileUnsupported events=1")) throw new AssertionError(tileReport);
         if (args.length == 2) {
             DiagnosticEvidence real = new DiagnosticEvidence();
             for (String path : args) {

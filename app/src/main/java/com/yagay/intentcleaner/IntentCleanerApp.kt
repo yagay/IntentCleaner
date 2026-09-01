@@ -104,7 +104,7 @@ class IntentCleanerApp : Application(), XposedServiceHelper.OnServiceListener {
                 val encoded = json.encodeToString(ModuleConfig.serializer(), config)
                 require(encoded.length <= RuleRepository.MAX_BACKUP_CHARS) { "配置超过传输上限，请减少规则后重试；未写入远程" }
                 val digest = RuntimeProtocol.digest(encoded)
-                // Only the known v1 JSON readers (19..23) may receive a safety pause
+                // Only the known v1 JSON readers (19..24) may receive an Intent-filter pause
                 // before the strict scan/version gate. Never send new rules to stale code.
                 val canPause = config.mode == DisplayMode.SHOW_ALL && targets.isNotEmpty() && targets.all {
                     RuntimeProtocol.supportsSafetyPause(it.state.name, it.loadedVersionCode)
