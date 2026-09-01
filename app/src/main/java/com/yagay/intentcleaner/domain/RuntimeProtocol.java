@@ -27,6 +27,6 @@ public final class RuntimeProtocol {
 
     /** Explicit compatibility allowlist; do not infer compatibility for future schemas. */
     public static boolean supportsSafetyPause(String state, long loaded) {
-        return ("UP_TO_DATE".equals(state) || "STALE".equals(state)) && (loaded == 19 || loaded == 20 || loaded == 21 || loaded == 22);
+        return ("UP_TO_DATE".equals(state) || "STALE".equals(state)) && (loaded == 19 || loaded == 20 || loaded == 21 || loaded == 22 || loaded == 23);
     }
 }

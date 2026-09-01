@@ -1,6 +1,7 @@
 package com.yagay.intentcleaner.xposed
 
 import android.content.Intent
+import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ResolveInfo
 import android.content.pm.ActivityInfo
@@ -10,6 +11,7 @@ import com.yagay.intentcleaner.domain.RuntimeProtocol
 import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam
 import io.github.libxposed.api.XposedModuleInterface.HotReloadedParam
 import android.os.Binder
+import android.os.Looper
 import android.os.SystemClock
 import android.os.Process
 import android.util.Log
@@ -128,15 +130,26 @@ class IntentCleanerModule : XposedModule() {
                         handle.replaceHook(orderHooker())
                         installedMethods.add("ORDER#${method.toGenericString()}")
                     }
+                    method != null && handle.id == "ic-alpha-order" -> {
+                        handle.replaceHook(alphabeticalOrderHooker())
+                        installedMethods.add("ALPHA#${method.toGenericString()}")
+                    }
                     else -> handle.unhook()
                 }
             }
             // Use host executable loaders, not module/APK loaders, to discover newly supported hooks.
+            if (!systemServer) runCatching {
+                // Query handles may belong only to the boot loader. Recover the host APK loader.
+                val application = Class.forName("android.app.ActivityThread")
+                    .getDeclaredMethod("currentApplication").invoke(null) as? Context
+                application?.classLoader?.let(loaders::add)
+            }.onFailure { record("ORDER_LOADER_UNAVAILABLE error=${it.javaClass.name}") }
             loaders.forEach { if (systemServer) installSystemServerQueryHooks(it) else installResolverClientHooks(it) }
             check(installedMethods.any { it.endsWith(if (systemServer) "@SYSTEM" else "@RESOLVER") }) {
                 "No query hooks after reload; restart required"
             }
             record("HOT_RELOAD_READY version=${BuildConfig.VERSION_CODE} hooks=${installedMethods.size}")
+            if (!systemServer) recordOrderingCapability()
         } catch (failure: Throwable) {
             // Per-hook replacement is atomic, the whole set is not. Do not report success on partial failure.
             record("HOT_RELOAD_FAILED version=${BuildConfig.VERSION_CODE} error=${failure.javaClass.name}")
@@ -209,13 +222,18 @@ class IntentCleanerModule : XposedModule() {
     private fun installFinalOrderingHooks(loader: ClassLoader) {
         listOf("com.android.internal.app.ResolverListAdapter", "com.android.internal.app.ChooserListAdapter",
             "com.android.intentresolver.ResolverListAdapter", "com.android.intentresolver.ChooserListAdapter").forEach { name ->
-            val clazz = runCatching { Class.forName(name, false, loader) }.getOrNull() ?: return@forEach
+            val clazz = runCatching { Class.forName(name, false, loader) }.getOrElse {
+                record("ORDER_CLASS_UNAVAILABLE class=$name")
+                return@forEach
+            }
             runCatching {
-                clazz.declaredMethods.filter { method ->
+                val methods = clazz.declaredMethods.filter { method ->
                     method.name == "processSortedList" && method.parameterTypes.size == 2 &&
                         method.parameterTypes[0] == List::class.java &&
                         method.parameterTypes[1] == Boolean::class.javaPrimitiveType
-                }.forEach { method ->
+                }
+                if (methods.isEmpty()) record("ORDER_METHOD_UNAVAILABLE class=$name signature=processSortedList_List_boolean")
+                methods.forEach { method ->
                     val key = "ORDER#${method.toGenericString()}"
                     if (installedMethods.add(key)) {
                         try {
@@ -229,6 +247,57 @@ class IntentCleanerModule : XposedModule() {
                 }
             }.onFailure { record("ORDER_DISCOVERY_FAILED class=$name error=${it.javaClass.name}") }
         }
+        // Both AOSP chooser versions publish their independently alphabetized mSortedList
+        // through BaseAdapter notifications. Restrict this hook to known chooser receivers.
+        runCatching {
+            val method = Class.forName("android.widget.BaseAdapter", false, loader)
+                .getDeclaredMethod("notifyDataSetChanged")
+            val key = "ALPHA#${method.toGenericString()}"
+            if (installedMethods.add(key)) {
+                try {
+                    hook(method).setId("ic-alpha-order").intercept(alphabeticalOrderHooker())
+                    record("ORDER_HOOK_INSTALLED stage=alpha method=${method.toGenericString()}")
+                } catch (failure: Throwable) {
+                    installedMethods.remove(key)
+                    throw failure
+                }
+            }
+        }.onFailure { record("ORDER_HOOK_FAILED stage=alpha error=${it.javaClass.name}") }
+        recordOrderingCapability()
+    }
+
+    private fun recordOrderingCapability() = record("ORDER_CAPABILITY ranked=${installedMethods.any { it.startsWith("ORDER#") }} alphaBoundary=${installedMethods.any { it.startsWith("ALPHA#") }} execution=unverified")
+
+    private fun adapterKind(receiver: Any): IntentKind? {
+        val intent = OrderingAccess.targetIntent(receiver) as? Intent ?: return null
+        val effective = intent.selector ?: intent
+        val context = runCatching { OrderingAccess.field(receiver, "mContext") as? Context }.getOrNull()
+        val mime = effective.type ?: runCatching {
+            context?.let { effective.resolveTypeIfNeeded(it.contentResolver) }
+        }.getOrNull()
+        return intent.intentKind(mime)
+    }
+
+    private fun orderItems(items: List<*>, kind: IntentKind, current: RuleSnapshot, stage: String,
+        fixedPackages: Set<String> = emptySet()): List<*> {
+        val priorities = current.priorities.apps[kind].orEmpty()
+        if (priorities.isEmpty() || items.size < 2) return items
+        val infos = items.map { item ->
+            requireNotNull(item)
+            if (item is ResolveInfo) item else if (stage == "alpha")
+                OrderingAccess.call(item, "getResolveInfo") as ResolveInfo
+            else item.javaClass.getMethod("getResolveInfoAt", Int::class.javaPrimitiveType)
+                .invoke(item, 0) as ResolveInfo
+        }
+        val movable = items.indices.filter { infos[it].activityInfo.packageName !in fixedPackages }
+        val sorted = prioritizeApps(movable, priorities,
+            { requireNotNull(infos[it].activityInfo).packageName },
+            { requireNotNull(infos[it].activityInfo.applicationInfo).uid / PER_USER_RANGE })
+        val positions = items.indices.toMutableList()
+        movable.forEachIndexed { index, position -> positions[position] = sorted[index] }
+        val changed = positions != items.indices.toList()
+        diagnostic("ORDER_RESULT stage=$stage kind=$kind count=${items.size} matched=${infos.count { it.activityInfo.packageName in priorities }} changed=$changed digest=${current.digest}")
+        return if (changed) positions.map { items[it] } else items
     }
 
     private fun orderHooker() = XposedInterface.Hooker { chain ->
@@ -236,40 +305,62 @@ class IntentCleanerModule : XposedModule() {
 
         val replacement = runCatching {
             val receiver = chain.thisObject ?: return@runCatching null
-            val intent = receiver.javaClass.methods.firstOrNull {
-                it.name == "getIntent" && it.parameterCount == 0 && it.returnType == Intent::class.java
-            }?.invoke(receiver) as? Intent ?: run {
-                diagnostic("ORDER_SKIP reason=no_adapter_intent")
-                return@runCatching null
-            }
-            val kind = intent.intentKind() ?: run {
+            val kind = adapterKind(receiver) ?: run {
                 diagnostic("ORDER_SKIP reason=unclassified_intent")
                 return@runCatching null
             }
-            val priorities = snapshot.priorities.apps[kind].orEmpty()
+            val current = snapshot
+            val priorities = current.priorities.apps[kind].orEmpty()
             if (priorities.isEmpty()) {
                 diagnostic("ORDER_SKIP kind=$kind reason=no_priorities")
                 return@runCatching null
             }
             val items = chain.args[0] as? List<*> ?: return@runCatching null
-            val infos = items.map { item ->
-                requireNotNull(item)
-                if (item is ResolveInfo) item else
-                    item.javaClass.getMethod("getResolveInfoAt", Int::class.javaPrimitiveType)
-                        .invoke(item, 0) as ResolveInfo
-            }
-            val positions = prioritizeApps(items.indices.toList(), priorities,
-                { requireNotNull(infos[it].activityInfo).packageName },
-                { requireNotNull(infos[it].activityInfo.applicationInfo).uid / PER_USER_RANGE })
-            diagnostic("ORDER_APPLIED kind=$kind count=${items.size} changed=${positions != items.indices.toList()}")
-            chain.args.toTypedArray().also { args -> args[0] = positions.map { items[it] } }
+            val ordered = orderItems(items, kind, current, "ranked")
+            if (ordered === items) null else chain.args.toTypedArray().also { it[0] = ordered }
         }.getOrElse {
             diagnostic("ORDER_FAILED error=${it.javaClass.name}")
             null
         }
         // Never catch/retry proceed: Android must execute exactly once.
-        if (replacement == null) chain.proceed() else chain.proceed(replacement)
+        val result = if (replacement == null) chain.proceed() else chain.proceed(replacement)
+        if (replacement != null) diagnostic("ORDER_DELIVERED stage=ranked uiVerified=false")
+        result
 
+    }
+
+    private fun alphabeticalOrderHooker() = XposedInterface.Hooker { chain ->
+        val receiver = chain.thisObject
+        if (receiver != null && OrderingAccess.isChooser(receiver)) runCatching {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                diagnostic("ORDER_SKIP stage=alpha reason=not_main_thread")
+                return@runCatching
+            }
+            pollPreferences()
+            val kind = adapterKind(receiver) ?: return@runCatching
+            val items = OrderingAccess.field(receiver, "mSortedList")
+            // Known AOSP backing lists are ArrayLists. Don't mutate arbitrary OEM list types.
+            if (items == null || items.javaClass != java.util.ArrayList::class.java) {
+                diagnostic("ORDER_SKIP stage=alpha reason=unsupported_backing_list")
+                return@runCatching
+            }
+            @Suppress("UNCHECKED_CAST")
+            val list = items as java.util.ArrayList<Any?>
+            // Alphabetical groups may include caller-provided targets. Freeze those packages,
+            // including grouped siblings, rather than moving caller-owned entries indirectly.
+            val callerTargets = OrderingAccess.field(receiver, "mCallerTargets") as List<*>
+            val fixed = callerTargets.map { target ->
+                val info = OrderingAccess.call(requireNotNull(target), "getResolveInfo") as ResolveInfo
+                info.activityInfo.packageName
+            }.toSet()
+            val ordered = orderItems(list, kind, snapshot, "alpha", fixed)
+            if (ordered !== list) {
+                // All reflection and validation completed before touching the live list.
+                ordered.forEachIndexed { index, item -> list[index] = item }
+                diagnostic("ORDER_DELIVERED stage=alpha kind=$kind uiVerified=false")
+            }
+        }.onFailure { diagnostic("ORDER_FAILED stage=alpha error=${it.javaClass.name}") }
+        chain.proceed()
     }
 
     private fun installHook(method: Method, layer: Layer): Boolean {
@@ -407,8 +498,15 @@ class IntentCleanerModule : XposedModule() {
             Log.w(TAG, "Refusing to empty $kind resolver; keeping Android result")
             return null
         }
-        // Ordering belongs at the adapter's post-ranking boundary, never in PM query results.
-        val ordered = filtered
+        // Text actions normally become an in-app menu without visiting a Resolver adapter.
+        // Only PROCESS_TEXT is promoted here; VIEW/SEND remain post-ranking operations.
+        val ordered = if (kind == IntentKind.PROCESS_TEXT) runCatching {
+            orderItems(filtered, kind, current, "text_query")
+        }.getOrElse {
+            diagnostic("ORDER_FAILED stage=text_query error=${it.javaClass.name}")
+            filtered
+        } else filtered
+        if (ordered !== filtered) changed = true
         if (!changed) {
             diagnostic("NO_CHANGE $layer $kind size=${values.size} hasSelection=${current.hasSelection(kind)}")
             return null
@@ -455,7 +553,7 @@ class IntentCleanerModule : XposedModule() {
                     config.priorities, config.diagnostic, config.managerAppId, digest)
                 lastEncodedConfig = encoded
                 record("MANAGER_IDENTITY appId=${config.managerAppId} source=remote_config")
-                record("RULES_READ reason=$reason count=${snapshot.configured.size} mode=${config.mode} diagnostic=${config.diagnostic} atomic=true")
+                record("RULES_READ reason=$reason count=${snapshot.configured.size} mode=${config.mode} diagnostic=${config.diagnostic} atomic=true priorities=${config.priorities.apps.mapValues { it.value.size }} digest=$digest")
                 return@runCatching
             }
             val rules = preferences.getStringSet(RuleRepository.KEY_RULES, emptySet()).orEmpty().toSet()

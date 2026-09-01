@@ -38,6 +38,12 @@ public final class DiagnosticEvidence {
                 line.contains(" HOOK_INSTALLED ") ? "hookInstalled" :
                 line.contains(" QUERY ") ? "queryObserved" :
                 line.contains(" ORDER_APPLIED ") ? "orderObserved" :
+                line.contains(" ORDER_RESULT ") ? (line.contains("changed=true") ? "orderChanged" : "orderUnchanged") :
+                line.contains(" ORDER_DELIVERED ") ? "orderDeliveredNotUiVerified" :
+                line.contains(" ORDER_HOOK_INSTALLED ") ? "orderHookInstalled" :
+                line.contains(" ORDER_CAPABILITY ") ? "orderCapabilityObserved" :
+                line.contains(" ORDER_SKIP ") ? "orderSkipped" :
+                line.contains(" ORDER_FAILED ") || line.contains(" ORDER_HOOK_FAILED ") ? "orderFailed" :
                 line.contains(" MANAGER_QUERY_BYPASS ") ? "managerBypass" :
                 line.contains(" CONFIG_ACK ") ? "configAcknowledged" :
                 line.contains(" HOT_RELOAD_READY ") ? "hotReloadReady" :

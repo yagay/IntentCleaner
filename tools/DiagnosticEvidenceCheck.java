@@ -14,6 +14,17 @@ public final class DiagnosticEvidenceCheck {
         for (int i=0; i<8300; i++) evidence.accept("test", prefix + "QUERY kind=OPEN n=" + i);
         report = evidence.report();
         if (!report.contains("omittedEvents=110") || !report.contains("textTruncated=true")) throw new AssertionError("bounds");
+        DiagnosticEvidence order = new DiagnosticEvidence();
+        order.accept("test", prefix + "ORDER_RESULT stage=ranked kind=OPEN changed=false");
+        order.accept("test", prefix + "ORDER_RESULT stage=ranked kind=OPEN changed=true");
+        order.accept("test", prefix + "ORDER_SKIP reason=no_priorities");
+        order.accept("test", prefix + "ORDER_FAILED stage=alpha");
+        order.accept("test", prefix + "ORDER_DELIVERED stage=ranked uiVerified=false");
+        String ordering = order.report();
+        if (!ordering.contains("orderUnchanged kind=OPEN events=1") ||
+                !ordering.contains("orderChanged kind=OPEN events=1") ||
+                !ordering.contains("orderSkipped events=1") || !ordering.contains("orderFailed events=1") ||
+                !ordering.contains("orderDeliveredNotUiVerified events=1")) throw new AssertionError(ordering);
         if (args.length == 2) {
             DiagnosticEvidence real = new DiagnosticEvidence();
             for (String path : args) {

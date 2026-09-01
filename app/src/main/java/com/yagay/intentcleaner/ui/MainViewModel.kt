@@ -403,15 +403,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         app.rules.setPriority(kind, app.rules.priorities.value.apps[kind].orEmpty() - packageName)
     }
 
-    fun movePriority(kind: IntentKind, packageName: String, offset: Int) {
+    fun movePriority(kind: IntentKind, packageName: String, offset: Int, visible: List<String>) {
         if (!canEdit()) return
-        val current = app.rules.priorities.value.apps[kind].orEmpty().toMutableList()
-        val index = current.indexOf(packageName)
-        val destination = index + offset
-        if (index < 0 || destination !in current.indices) return
-        current.removeAt(index)
-        current.add(destination, packageName)
-        app.rules.setPriority(kind, current)
+        val current = app.rules.priorities.value.apps[kind].orEmpty()
+        app.rules.setPriority(kind, com.yagay.intentcleaner.domain.moveVisiblePriority(current, visible, packageName, offset))
     }
 
     fun resetPriority(kind: IntentKind) { if (canEdit()) app.rules.setPriority(kind, emptyList()) }

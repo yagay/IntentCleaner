@@ -1,13 +1,14 @@
-# Intentcleaner 1.4.8
+# Intentcleaner 1.4.9
 
-包名 `com.yagay.intentcleaner`，版本码22。基于 libxposed API 102 的意图候选过滤模块。不使用 IFW、不修改系统 XML；Root 仅用于用户点击导出时的只读诊断。
+包名 `com.yagay.intentcleaner`，版本码23。基于 libxposed API 102 的意图候选过滤模块。不使用 IFW、不修改系统 XML；Root 仅用于用户点击导出时的只读诊断。
 
-本次组件状态误判及跨页面搜索修复见 [CHANGES-1.4.8.md](CHANGES-1.4.8.md)。旧 CHANGES/AUDIT 为历史记录，不代表本版行为。
+本次排序修复及清理项联动见 [CHANGES-1.4.9.md](CHANGES-1.4.9.md)。旧 CHANGES/AUDIT 为历史记录，不代表本版行为。
 
 ## 架构
 
 - system：使用 onSystemServerStarting 提供的系统 ClassLoader，在 PackageManager Binder 查询出口过滤。
-- android / com.android.intentresolver：选择器客户端兜底及排序；额外探测 AOSP processSortedList(List, boolean) 排名结束入口，避免置顶被后续排名覆盖。厂商实现不匹配则跳过。
+- android / com.android.intentresolver：选择器客户端兜底及排序。已知 AOSP processSortedList(List, boolean) 处理普通列表/分享推荐区；目标 Intent 从父类 protected getter、字段或 communicator 读取。分享全部应用区在已知 Chooser 的 BaseAdapter 通知前调整 mSortedList，保留调用方专属包的位置；不修改联系人区域。厂商实现不匹配则跳过并记录。
+- PROCESS_TEXT：在查询出口对过滤后的候选稳定排序，覆盖不经过 Resolver 的原生选中文字菜单；来源应用后续自行重排的菜单不保证一致。VIEW/SEND 不在系统查询阶段预排，避免干扰默认解析及被推荐算法覆盖。
 - 扫描和Hook共用分类：SEND、SEND_MULTIPLE、PROCESS_TEXT分别对应三类；VIEW的content+MIME、file、无scheme但带MIME归打开方式。HTTP/HTTPS无类型或HTML归浏览器，明确文件MIME归打开方式。自定义协议、无MIME的content、联系人cursor类型不分类，保持原行为。支持selector和系统resolvedType。
 - 显式 component/package 放行；管理身份通过框架远端配置同步，不依赖启动时的ApplicationInfo。身份未知时系统查询暂时不作过滤，打开本模块同步后恢复；其余调用方同应用保护仍按完整UID。
 - PROCESS_TEXT 允许隐藏全部候选；其他分类保留空列表恢复保护，触发时记录 RESTORE_ALL。
@@ -28,7 +29,11 @@
 
 更新检测、作用域详情、实际文件检查和导出放在状态页。实际文件检查不使用 MATCH_ALL、不打开文件或读取正文、不记录完整URI，只输出诊断结果，不修改管理目录或规则。查询身份与来源应用不同，不能保证与所有实际菜单一致。
 
-系统确认使用 UID 认证的私有查询返回实际配置摘要；只证明系统查询 Hook，不等于所有选择器效果。已知兼容的19/20/21/22版可在严格扫描校验前收到暂停配置，FAILED/RELOADING及未知版本仍不允许；提交不等于生效。诊断导出不等待同步或框架状态查询，保存最近一次观察及时间，再收集原始日志。导出任务由 ViewModel 持有，旋转屏幕不会重新开始；应用被杀后不保证继续导出。
+系统确认使用 UID 认证的私有查询返回实际配置摘要；只证明系统查询 Hook，不等于所有选择器效果。已知兼容的19/20/21/22/23版可在严格扫描校验前收到暂停配置，FAILED/RELOADING及未知版本仍不允许；提交不等于生效。诊断导出不等待同步或框架状态查询，保存最近一次观察及时间，再收集原始日志。导出任务由 ViewModel 持有，旋转屏幕不会重新开始；应用被杀后不保证继续导出。
+
+排序页的优先列表、可添加列表和展开组件均按当前分类及规则模式过滤：黑名单隐藏已选组件，白名单保留已选组件，暂停过滤时显示全部匹配组件。应用只清理部分组件时保留其余组件；全部清理后不显示。已保存顺序不因隐藏或扫描缺席而删除，取消清理后恢复。上下移动跳过隐藏项。恢复系统顺序会清空该分类全部排序配置（含暂不显示项）。
+
+排序日志区分 ORDER_CAPABILITY（安装边界）、RULES_READ 的 priorities/digest（该进程读到配置）、ORDER_RESULT 的 matched/changed（计算结果）、ORDER_DELIVERED（交给显示边界但未验证画面）及 ORDER_SKIP/ORDER_FAILED。这些不是最终 UI 验证。保存/恢复顺序后重新打开菜单；热重载重新发现排序入口时尝试恢复宿主 APK ClassLoader，未知实现仍需重启或进一步适配。
 
 ## 日志与隐私
 

@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yagay.intentcleaner.domain.ComponentCandidate
 import com.yagay.intentcleaner.domain.IntentKind
+import com.yagay.intentcleaner.domain.priorityCandidates
 
 @Composable
 fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
@@ -28,12 +29,14 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
     var expandedKey by remember { mutableStateOf<String?>(null) }
     
     val rankedRaw = state.priorities.apps[kind].orEmpty()
-    val apps = remember(state.candidates, kind) {
-        state.candidates.filter { it.rule.kind == kind }.groupBy { it.rule.packageName }
+    val apps = remember(state.candidates, state.selected, state.displayMode, kind) {
+        priorityCandidates(state.candidates, state.selected, state.displayMode, kind)
+            .groupBy { it.rule.packageName }
     }
+    val visibleRanked = rankedRaw.filter { it in apps }
 
     // 同时对已优先和可添加列表进行全局搜索过滤
-    val ranked = rankedRaw.mapIndexed { index, pkg -> index to pkg }.filter { (_, pkg) ->
+    val ranked = visibleRanked.mapIndexed { index, pkg -> index to pkg }.filter { (_, pkg) ->
         state.query.isBlank() || pkg.contains(state.query, true) ||
             apps[pkg]?.any { it.matchesQuery(state.query) } == true
     }
@@ -62,7 +65,7 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                 }
             }
         }
-        if (showInfo) Text("按分类保存，仅在已适配的排名结束入口排序；不再预排查询结果。未知入口保留系统顺序。隐藏规则优先，联系人和调用方专属入口不调整。", style = MaterialTheme.typography.bodySmall)
+        if (showInfo) Text("按分类保存。规则要求清理的组件不显示；应用仍有可见组件时保留。暂时隐藏的排序配置不删除，取消清理后恢复。分享适配推荐区及全部应用区，文本处理在查询出口排序；未知厂商菜单可能另行重排。联系人和调用方专属入口不调整。", style = MaterialTheme.typography.bodySmall)
         val compatibility = when {
             !state.module.connected -> "LSPosed 未连接：可以保存，但尚未生效。"
             state.module.detection.hosts.isEmpty() -> "未确认选择器宿主，当前设备排序能力未知。"
@@ -70,24 +73,23 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                 "厂商独立排序路径尚未适配；仅走 AOSP 路径时可能有效，不能保证置顶。"
             else -> "已实现 AOSP 路径适配，未确认本机命中。保存后重新打开选择器核对；更新模块后需重启选择器。"
         }
-        if (showInfo) Text(compatibility, Modifier.padding(vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (!state.runtime.ready) state.runtime.message else if (kind == IntentKind.PROCESS_TEXT) "文本候选按查询结果排序；来源应用若自行重排，仍可能不同。保存后重新打开文本菜单。" else compatibility,
+            Modifier.padding(vertical = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         
         LazyColumn(Modifier.weight(1f)) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("优先应用（${rankedRaw.size}/200）", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                    Text("优先应用（${visibleRanked.size}）", Modifier.weight(1f), fontWeight = FontWeight.Bold)
                     TextButton(onClick = { vm.resetPriority(kind) }, enabled = rankedRaw.isNotEmpty()) { Text("恢复系统顺序") }
                 }
-                if (rankedRaw.isEmpty()) Text("尚未设置，从下方添加应用。", style = MaterialTheme.typography.bodySmall)
+                if (visibleRanked.isEmpty()) Text("当前没有可显示的优先应用，从下方添加。", style = MaterialTheme.typography.bodySmall)
+                if (rankedRaw.size != visibleRanked.size) Text("已保存 ${rankedRaw.size}/200 项；已清理或本次未匹配项暂不显示。", style = MaterialTheme.typography.bodySmall)
             }
             
             items(ranked, key = { "priority|${it.second}" }) { (originalIndex, packageName) ->
                 val components = apps[packageName].orEmpty()
                 val key = "ranked|$packageName"
                 val expanded = expandedKey == key
-                val allHidden = components.isNotEmpty() && state.selected.any { it.kind == kind } && components.all {
-                    !state.displayMode.includes(it.rule in state.selected, state.selected.any { rule -> rule.kind == kind })
-                }
                 
                 Column {
                     Row(
@@ -98,11 +100,9 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text("${originalIndex + 1}. ${components.firstOrNull()?.appLabel ?: packageName}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (allHidden) Text("当前规则要求隐藏；实际效果以菜单为准", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                            else if (components.isEmpty() || components.all { it.unavailable }) Text("仅保留排序配置 · 本次未确认", style = MaterialTheme.typography.labelSmall)
                         }
-                        IconButton(onClick = { vm.movePriority(kind, packageName, -1) }, enabled = originalIndex > 0) { Icon(Icons.Rounded.ArrowUpward, "上移") }
-                        IconButton(onClick = { vm.movePriority(kind, packageName, 1) }, enabled = originalIndex < rankedRaw.lastIndex) { Icon(Icons.Rounded.ArrowDownward, "下移") }
+                        IconButton(onClick = { vm.movePriority(kind, packageName, -1, visibleRanked) }, enabled = originalIndex > 0) { Icon(Icons.Rounded.ArrowUpward, "上移") }
+                        IconButton(onClick = { vm.movePriority(kind, packageName, 1, visibleRanked) }, enabled = originalIndex < visibleRanked.lastIndex) { Icon(Icons.Rounded.ArrowDownward, "下移") }
                         IconButton(onClick = { vm.removePriority(kind, packageName) }) { Icon(Icons.Rounded.Close, "取消优先") }
                     }
                     if (expanded) {
