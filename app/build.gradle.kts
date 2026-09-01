@@ -12,8 +12,8 @@ android {
         applicationId = "com.yagay.intentcleaner"
         minSdk = 31
         targetSdk = 37
-        versionCode = 18
-        versionName = "1.4.4"
+        versionCode = 19
+        versionName = "1.4.5"
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

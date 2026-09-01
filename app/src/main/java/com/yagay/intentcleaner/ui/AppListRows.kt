@@ -127,7 +127,7 @@ import com.yagay.intentcleaner.domain.ComponentRule
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (item.unavailable) Text("已配置 · 本次未扫描到", style = MaterialTheme.typography.labelSmall,
+                    if (item.unavailable) Text("保留管理入口 · 本次匹配未确认", style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error)
                     else if (item.advanced) Text("高级候选 · 非普通打开入口保证", style = MaterialTheme.typography.labelSmall)
                     item.evidence.take(3).forEach { reason ->

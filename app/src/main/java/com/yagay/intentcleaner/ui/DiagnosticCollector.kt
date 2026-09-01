@@ -124,6 +124,12 @@ object DiagnosticCollector {
         appendLine("displayMode=${state.displayMode.name}")
         appendLine("diagnosticMode=${state.diagnosticMode}")
         appendLine("syncStatus=${state.syncStatus}")
+        appendLine("systemConfigAcknowledged=${state.runtime.ready}")
+        appendLine("configDigest=${state.runtime.digest}")
+        appendLine("recoveryDecisionRequired=${state.runtime.needsDecision}")
+        appendLine("runtimeMessage=${state.runtime.message}")
+        appendLine("uiFilter=${state.uiFilter} category=${state.filter} showAdvanced=${state.showAdvanced}")
+        appendLine("searchActive=${state.query.isNotBlank()} candidates=${state.candidates.size} visibleGroups=${state.groups.size}")
         state.module.runningTargets.forEach {
             appendLine("target=${it.processName}|${it.state}|version=${it.version}")
         }

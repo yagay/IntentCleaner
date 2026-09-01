@@ -17,9 +17,50 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 
 /** Evidence-based discovery, not a claim to enumerate every installed intent filter. */
 class IntentCatalog(private val context: Context) {
+    @Serializable private data class KnownCandidate(val rule: ComponentRule, val label: String, val activity: String,
+        val advanced: Boolean, val evidence: List<String>)
+    private val cachePrefs = context.getSharedPreferences("catalog_cache", Context.MODE_PRIVATE)
+    private val cacheJson = Json { ignoreUnknownKeys = true }
+
+    suspend fun loadKnown(): List<ComponentCandidate> = withContext(Dispatchers.IO) {
+        try {
+            val encoded = cachePrefs.getString("entries", null) ?: return@withContext emptyList()
+            if (encoded.length > 2_000_000) return@withContext emptyList()
+            cacheJson.decodeFromString(ListSerializer(KnownCandidate.serializer()), encoded).take(5_000)
+                .filter { it.rule.isValid() }.map {
+                    ComponentCandidate(it.rule, it.label, it.activity,
+                        loadAppIcon(it.rule.packageName) { context.packageManager.getApplicationIcon(it.rule.packageName) },
+                        it.evidence, it.advanced, unavailable = true)
+                }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { emptyList() }
+    }
+
+    suspend fun saveKnown(items: List<ComponentCandidate>) = withContext(Dispatchers.IO) {
+        val records = items.take(5_000).map { KnownCandidate(it.rule, it.appLabel, it.activityLabel, it.advanced, it.evidence.take(3)) }
+        val encoded = cacheJson.encodeToString(ListSerializer(KnownCandidate.serializer()), records)
+        if (encoded.length <= 2_000_000) cachePrefs.edit().putString("entries", encoded).apply()
+    }
+
+    suspend fun completeConfigured(items: List<ComponentCandidate>, selected: Set<ComponentRule>): List<ComponentCandidate> = withContext(Dispatchers.IO) {
+        val known = items.map { it.rule.id }.toSet()
+        items + selected.filter { it.id !in known }.map { rule ->
+            val label = runCatching {
+                @Suppress("DEPRECATION")
+                context.packageManager.getApplicationInfo(rule.packageName, 0).loadLabel(context.packageManager).toString()
+            }.getOrDefault(rule.packageName)
+            ComponentCandidate(rule, label, rule.className.substringAfterLast('.'),
+                loadAppIcon(rule.packageName) { context.packageManager.getApplicationIcon(rule.packageName) },
+                evidence = listOf("已配置；等待重新确认匹配"), unavailable = true)
+        }
+    }
     private val appIconCache = LruCache<String, Bitmap>(128)
     @Volatile var lastReport: String = "Not scanned"
         private set
@@ -147,6 +188,11 @@ class IntentCatalog(private val context: Context) {
     }
 
     companion object {
+        fun mergeSnapshot(previous: List<ComponentCandidate>, fresh: List<ComponentCandidate>): List<ComponentCandidate> {
+            val freshIds = fresh.map { it.rule.id }.toSet()
+            return merge(fresh + previous.filter { it.rule.id !in freshIds }.map { it.copy(unavailable = true) })
+        }
+
         fun merge(items: List<ComponentCandidate>): List<ComponentCandidate> =
             items.groupBy { it.rule.id }.values.map { matches ->
                 val first = matches.firstOrNull { !it.advanced && !it.unavailable } ?: matches.first()

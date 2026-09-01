@@ -1,8 +1,8 @@
-# Intentcleaner 1.4.4
+# Intentcleaner 1.4.5
 
-包名 `com.yagay.intentcleaner`，版本码18。基于 libxposed API 102 的意图候选过滤模块。不使用 IFW、不修改系统 XML；Root 仅用于用户点击导出时的只读诊断。
+包名 `com.yagay.intentcleaner`，版本码19。基于 libxposed API 102 的意图候选过滤模块。不使用 IFW、不修改系统 XML；Root 仅用于用户点击导出时的只读诊断。
 
-本次分类与无效补丁整理见 [CHANGES-1.4.4.md](CHANGES-1.4.4.md)。AUDIT-1.4.3.md 为历史审查，不代表本版行为。
+本次运行版本保护、配置恢复、系统确认及热重载见 [CHANGES-1.4.5.md](CHANGES-1.4.5.md)。旧 CHANGES/AUDIT 为历史记录，不代表本版行为。
 
 ## 架构
 
@@ -17,13 +17,14 @@
 ## 安装与验证
 
 1. 先导出 JSON 备份。本地编译后使用原签名覆盖安装。
-2. 打开应用确认配置提交，授权 system、android 及实际使用的 com.android.intentresolver，不要勾选所有应用。
-3. 重启手机。**本版关闭自动热重载：代码更新需要重启，规则修改仍实时同步。**
-4. 开启诊断，按审查报告一次复现五类场景，最后只导出一个 ZIP。
+2. 授权 system、android 及实际使用的 com.android.intentresolver，不要勾选所有应用。
+3. **首次从 1.4.4 或更早版本升级必须重启一次。** 后续版本支持 API102 热重载尝试，可点“检测并应用模块更新”；框架不支持或失败时仍需重启。
+4. 如提示远程配置恢复，明确选择恢复或重置。运行版本与系统配置摘要核实后才扫描；旧代码或未确认配置不会覆盖当前管理列表。
+5. 开启诊断，按审查报告一次复现五类场景，最后只导出一个 ZIP。
 
-普通扫描列表不再混入仅宽泛探针命中的候选；可打开“显示高级候选”。已配置但未扫描到的组件仍保留取消入口，搜索及视图过滤照常生效。“用实际文件检查打开方式”只获取MIME并查询候选，不打开目标、不读取正文、不保存完整URI。以本模块身份查询不保证和所有来源应用的菜单完全相同；实际文件结果保留到下一次完整刷新。
+普通扫描列表不混入仅宽泛探针命中的候选；可打开“显示高级候选”。历史候选与已配置项保留管理入口，匹配未确认时明确标记，分类、搜索及视图过滤照常生效。“用实际文件检查打开方式”只获取MIME并查询候选，不打开目标、不读取正文、不保存完整URI。以本模块身份查询不保证和所有来源应用的菜单完全相同；后续刷新未命中的历史项不代表仍是有效打开目标。
 
-界面“已加载”不代表 Hook 已安装或实际命中；后两项以诊断日志为证据，无证据时是未知。导出任务由 ViewModel 持有，旋转屏幕不会重新开始；应用被杀后不保证继续导出。
+系统确认使用 UID 认证的私有查询返回实际配置摘要；只证明系统查询 Hook，不等于所有选择器效果。界面会明确显示旧代状态与更新结果。导出任务由 ViewModel 持有，旋转屏幕不会重新开始；应用被杀后不保证继续导出。
 
 ## 日志与隐私
 
@@ -49,4 +50,6 @@ java -cp /tmp/intentcleaner-check DiagnosticBufferCheck
 java -cp /tmp/intentcleaner-check FilterPolicyCheck
 java -cp /tmp/intentcleaner-check ClassificationCheck
 java -cp /tmp/intentcleaner-check DiagnosticEvidenceCheck
+javac -d /tmp/intentcleaner-check app/src/main/java/com/yagay/intentcleaner/domain/RuntimeProtocol.java tools/RuntimeProtocolCheck.java
+java -cp /tmp/intentcleaner-check RuntimeProtocolCheck
 ```

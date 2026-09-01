@@ -11,6 +11,11 @@ import androidx.compose.material.icons.rounded.Sort
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yagay.intentcleaner.IntentCleanerApp
+import com.yagay.intentcleaner.RuntimeStatus
+import com.yagay.intentcleaner.BuildConfig
+import com.yagay.intentcleaner.domain.RuntimeProtocol
+import io.github.libxposed.service.HookedTarget
+import io.github.libxposed.service.HotReloadResult
 import com.yagay.intentcleaner.data.RuleRepository
 import com.yagay.intentcleaner.data.IntentCatalog
 import com.yagay.intentcleaner.data.ResolverScopeDetector
@@ -53,8 +58,9 @@ data class ModuleStatus(
     val missingScope: Set<String> get() = detection.recommended - grantedScope
     val extraScope: Set<String> get() = grantedScope - detection.hosts.map { it.packageName }.toSet()
     val resolverLoaded: Boolean get() = runningTargets.any { target ->
-        target.state == "UP_TO_DATE" && detection.hosts.any { it.processName == target.processName }
+        RuntimeProtocol.current(target.state, target.version, BuildConfig.VERSION_CODE.toLong()) && detection.hosts.any { it.processName == target.processName }
     }
+    val outdated: Boolean get() = runningTargets.any { !RuntimeProtocol.current(it.state, it.version, BuildConfig.VERSION_CODE.toLong()) }
 }
 
 enum class Destination(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
@@ -85,7 +91,8 @@ data class MainState(
     val groups: List<AppGroup> = emptyList(),
     val destination: Destination = Destination.RULES,
     val expandedAppKey: String? = null,
-    val showAdvanced: Boolean = false
+    val showAdvanced: Boolean = false,
+    val runtime: RuntimeStatus = RuntimeStatus()
 )
 
 data class AppGroup(
@@ -124,6 +131,11 @@ fun retainConfiguredCandidates(items: List<ComponentCandidate>, selected: Set<Co
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as IntentCleanerApp
+    private val mutableUpdating = MutableStateFlow(false)
+    val updating: StateFlow<Boolean> = mutableUpdating
+    private val mutableUpdateMessage = MutableStateFlow<String?>(null)
+    val updateMessage: StateFlow<String?> = mutableUpdateMessage
+    private val seenSelected = mutableSetOf<String>()
     private val candidates = MutableStateFlow<List<ComponentCandidate>>(emptyList())
     private val showAdvanced = MutableStateFlow(false)
     private val mutableFileCheckStatus = MutableStateFlow<String?>(null)
@@ -138,9 +150,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableFileCheckStatus.value = "正在检查实际文件的候选，不会打开文件…"
             error.value = null
             try {
+                check(app.synchronize()) { app.runtime.value.message }
                 val found = app.catalog.inspectFile(uri)
+                check(app.synchronize()) { app.runtime.value.message }
                 if (generation == refreshGeneration) {
                     candidates.value = IntentCatalog.merge(candidates.value + found)
+                    app.catalog.saveKnown(candidates.value)
                     mutableFileCheckStatus.value = "本次实际文件查询返回 ${found.size} 个组件，已合并并标注匹配依据"
                 }
             } catch (cancelled: CancellationException) {
@@ -178,11 +193,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             var report: File? = null
             try {
+                app.synchronize()
                 val freshStatus = readModuleStatus(app.service.value)
                 val config = app.rules.remoteSnapshot()
                 report = DiagnosticCollector.collect(app, state.value.copy(
                     module = freshStatus, selected = config.rules, displayMode = config.mode,
                     priorities = config.priorities, diagnosticMode = config.diagnostic,
+                    runtime = app.runtime.value,
                     syncStatus = app.syncStatus.value
                 ))
                 val ready = requireNotNull(report)
@@ -202,17 +219,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private data class ListContent(val candidates: List<ComponentCandidate>, val filter: IntentKind?, val query: String, val groups: List<AppGroup>, val advanced: Boolean = false)
+    private data class ListContent(val candidates: List<ComponentCandidate>, val filter: IntentKind?, val query: String, val groups: List<AppGroup>, val advanced: Boolean = false,
+        val selected: Set<ComponentRule> = emptySet(), val uiFilter: UiFilter = UiFilter.ALL)
 
     private val catalogView = combine(candidates, showAdvanced) { items, advanced -> items to advanced }
     private val grouped = combine(catalogView, app.rules.rules, filter, query, uiFilter) { view, selected, kind, text, ui ->
         val items = retainConfiguredCandidates(view.first, selected)
-        val visible = items.filter { view.second || !it.advanced || it.rule in selected }
-        ListContent(items, kind, text, groupCandidates(visible, selected, kind, text, ui), view.second)
+        seenSelected.addAll(selected.map { it.id })
+        val visible = items.filter { view.second || !it.advanced || it.rule.id in seenSelected }
+        ListContent(items, kind, text, groupCandidates(visible, selected, kind, text, ui), view.second, selected, ui)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ListContent(emptyList(), null, "", emptyList()))
     
     val state: StateFlow<MainState> = combine(
-        moduleStatus, loading, error, grouped, app.rules.rules, app.rules.displayMode, app.rules.priorities, app.rules.diagnosticMode, app.syncStatus, destination, expandedAppKey, uiFilter
+        moduleStatus, loading, error, grouped, app.runtime, app.rules.displayMode, app.rules.priorities, app.rules.diagnosticMode, app.syncStatus, destination, expandedAppKey
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         MainState(
@@ -220,7 +239,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loading = values[1] as Boolean,
             error = values[2] as String?,
             candidates = (values[3] as ListContent).candidates,
-            selected = values[4] as Set<ComponentRule>,
+            selected = (values[3] as ListContent).selected,
+            runtime = values[4] as RuntimeStatus,
             displayMode = values[5] as DisplayMode,
             filter = (values[3] as ListContent).filter,
             query = (values[3] as ListContent).query,
@@ -231,14 +251,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             syncStatus = values[8] as String,
             destination = values[9] as Destination,
             expandedAppKey = values[10] as String?,
-            uiFilter = values[11] as UiFilter
+            uiFilter = (values[3] as ListContent).uiFilter
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainState())
 
     init {
-        refresh()
         viewModelScope.launch {
-            app.service.collectLatest { readModuleStatus(it) }
+            app.service.collectLatest {
+                readModuleStatus(it)
+                refresh()
+            }
         }
     }
 
@@ -255,8 +277,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             loading.value = true
             error.value = null
             try {
+                if (candidates.value.isEmpty()) candidates.value = app.catalog.loadKnown()
+                candidates.value = app.catalog.completeConfigured(candidates.value, app.rules.rules.value)
+                check(app.synchronize()) { app.runtime.value.message }
                 val result = app.catalog.scan()
-                if (generation == refreshGeneration) candidates.value = result
+                check(app.synchronize()) { app.runtime.value.message }
+                if (generation == refreshGeneration) {
+                    candidates.value = IntentCatalog.mergeSnapshot(candidates.value, result)
+                    app.catalog.saveKnown(candidates.value)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -269,7 +298,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshModuleStatus() {
-        viewModelScope.launch { readModuleStatus(app.service.value) }
+        viewModelScope.launch {
+            readModuleStatus(app.service.value)
+            app.synchronize()
+        }
+    }
+
+    fun resolveRecovery(restore: Boolean) {
+        viewModelScope.launch {
+            app.resolveRecovery(restore)
+            refresh()
+        }
+    }
+
+    fun applyModuleUpdate() {
+        if (mutableUpdating.value) return
+        mutableUpdating.value = true
+        mutableUpdateMessage.value = "正在检测运行目标…"
+        viewModelScope.launch {
+            try {
+                val bound = app.service.value ?: error("未连接 LSPosed")
+                val targets = withContext(Dispatchers.IO) { bound.runningTargets }
+                val pending = targets.filter { !RuntimeProtocol.current(it.state.name, it.loadedVersionCode, BuildConfig.VERSION_CODE.toLong()) }
+                val messages = mutableListOf<String>()
+                for (target in pending) {
+                    if (target.state == HookedTarget.State.RELOADING) {
+                        messages += "${target.processName}：框架正在重载，请稍后重新检测"
+                        continue
+                    }
+                    if (target.loadedVersionCode < 19) {
+                        messages += "${target.processName}：旧版本 ${target.loadedVersionCode} 不支持本模块热重载，请完整重启手机"
+                        continue
+                    }
+                    val result = withTimeoutOrNull(15_000) {
+                        withContext(Dispatchers.IO) {
+                            suspendCancellableCoroutine<HotReloadResult> { continuation ->
+                                bound.hotReloadModule(target, null) { _, reply ->
+                                    if (continuation.isActive) continuation.resume(reply)
+                                }
+                            }
+                        }
+                    }
+                    messages += "${target.processName}：" + when (result?.status()) {
+                        HotReloadResult.Status.SUCCEEDED -> "框架报告更新成功，正在重新核实"
+                        HotReloadResult.Status.UNSUPPORTED -> "框架不支持，请重启手机"
+                        HotReloadResult.Status.FAILED -> "更新失败：${result?.message() ?: "旧模块拒绝"}；请重启手机"
+                        HotReloadResult.Status.PROCESS_DIED -> "目标已退出，等待重新启动"
+                        HotReloadResult.Status.IN_PROGRESS -> "框架正在重载，请稍后重新检测"
+                        null -> "等待超时，不代表已取消；请重新检测，勿重复请求"
+                    }
+                }
+                mutableUpdateMessage.value = if (messages.isEmpty()) "没有需要热更新的运行目标；正在核实配置" else messages.joinToString("\n")
+                refresh()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                mutableUpdateMessage.value = "更新检查失败：${failure.message}；未重启任何系统进程"
+            } finally { mutableUpdating.value = false }
+        }
     }
 
     private suspend fun readModuleStatus(service: XposedService?): ModuleStatus {
@@ -300,9 +386,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return status
     }
 
-    fun toggle(rule: ComponentRule) = app.rules.toggle(rule)
-    fun setGroupSelected(group: AppGroup, selected: Boolean) = app.rules.setSelected(group.components.map { it.rule }, selected)
-    fun setDisplayMode(value: DisplayMode) = app.rules.setDisplayMode(value)
+    private fun canEdit(): Boolean = app.rules.hasLocalConfiguration().also {
+        if (!it) error.value = "请先完成远程配置恢复或重置，避免覆盖原有规则"
+    }
+    fun toggle(rule: ComponentRule) { if (canEdit()) app.rules.toggle(rule) }
+    fun setGroupSelected(group: AppGroup, selected: Boolean) { if (canEdit()) app.rules.setSelected(group.components.map { it.rule }, selected) }
+    fun setDisplayMode(value: DisplayMode) { if (canEdit()) app.rules.setDisplayMode(value) }
     fun setFilter(value: IntentKind?) { filter.value = value }
     fun setQuery(value: String) { query.value = value }
     fun setUiFilter(value: UiFilter) { uiFilter.value = value }
@@ -312,15 +401,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun importJson(content: String) = app.rules.importJson(content)
 
     fun pinApp(kind: IntentKind, packageName: String) {
+        if (!canEdit()) return
         val current = app.rules.priorities.value.apps[kind].orEmpty()
         if (packageName !in current && current.size < 200) app.rules.setPriority(kind, current + packageName)
     }
 
     fun removePriority(kind: IntentKind, packageName: String) {
+        if (!canEdit()) return
         app.rules.setPriority(kind, app.rules.priorities.value.apps[kind].orEmpty() - packageName)
     }
 
     fun movePriority(kind: IntentKind, packageName: String, offset: Int) {
+        if (!canEdit()) return
         val current = app.rules.priorities.value.apps[kind].orEmpty().toMutableList()
         val index = current.indexOf(packageName)
         val destination = index + offset
@@ -330,7 +422,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         app.rules.setPriority(kind, current)
     }
 
-    fun resetPriority(kind: IntentKind) = app.rules.setPriority(kind, emptyList())
+    fun resetPriority(kind: IntentKind) { if (canEdit()) app.rules.setPriority(kind, emptyList()) }
 
     fun requestScope() {
         if (scopeRequestInFlight) return

@@ -31,6 +31,19 @@ class RuleRepository(context: Context) {
     private val mutableRevision = MutableStateFlow(0L)
     val revision: StateFlow<Long> = mutableRevision.asStateFlow()
 
+    // Existing installations may have deliberately empty rules; key presence, not count, matters.
+    fun hasLocalConfiguration(): Boolean = prefs.contains(KEY_INITIALIZED) || prefs.contains(KEY_RULES) ||
+        prefs.contains(KEY_DISPLAY_MODE) || prefs.contains(KEY_BLACKLIST) || prefs.contains(KEY_PRIORITIES)
+
+    fun markInitialized() { prefs.edit().putBoolean(KEY_INITIALIZED, true).apply() }
+
+    @Synchronized fun restoreRemote(config: ModuleConfig) {
+        config.validated()
+        replace(config.rules, config.mode != DisplayMode.SHOW_SELECTED, config.priorities, config.mode)
+        setDiagnosticMode(config.diagnostic)
+        markInitialized()
+    }
+
     @Synchronized fun remoteSnapshot(): ModuleConfig = ModuleConfig(
         mutableRules.value.toSet(), mutableMode.value, mutablePriorities.value,
         mutableDiagnostic.value, android.os.Process.myUid() % 100_000
@@ -123,6 +136,7 @@ class RuleRepository(context: Context) {
         const val KEY_CONFIG = "config_v1"
         val SYNCED_KEYS = setOf(KEY_RULES, KEY_BLACKLIST, KEY_DISPLAY_MODE, KEY_PRIORITIES, KEY_DIAGNOSTIC)
         private const val LOCAL_PREFS = "rules_local"
+        private const val KEY_INITIALIZED = "configuration_initialized"
         private const val MAX_RULES = 20_000
         const val MAX_BACKUP_CHARS = 2_000_000
     }

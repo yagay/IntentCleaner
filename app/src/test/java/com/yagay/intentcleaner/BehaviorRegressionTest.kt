@@ -15,6 +15,28 @@ import java.io.Reader
 import java.io.StringReader
 
 class BehaviorRegressionTest {
+    @Test fun selectingInAllViewDoesNotRemoveAnApp() {
+        val item = candidate(IntentKind.BROWSER)
+        assertEquals(groupCandidates(listOf(item), emptySet(), IntentKind.BROWSER, "", UiFilter.ALL),
+            groupCandidates(listOf(item), setOf(item.rule), IntentKind.BROWSER, "", UiFilter.ALL))
+    }
+
+    @Test fun missingFreshMatchRetainsLabelAndRule() {
+        val item = candidate(IntentKind.BROWSER, label = "Browser name")
+        val merged = com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(item), emptyList())
+        assertEquals(item.rule, merged.single().rule)
+        assertEquals("Browser name", merged.single().appLabel)
+        assertTrue(merged.single().unavailable)
+        assertEquals(1, groupCandidates(merged, emptySet(), IntentKind.BROWSER, "Browser name", UiFilter.ALL).size)
+    }
+
+    @Test fun freshMatchReplacesHistoricalMetadata() {
+        val old = candidate(IntentKind.OPEN).copy(unavailable = true)
+        val fresh = old.copy(appLabel = "Updated", unavailable = false)
+        val merged = com.yagay.intentcleaner.data.IntentCatalog.mergeSnapshot(listOf(old), listOf(fresh))
+        assertEquals(listOf(fresh), merged)
+    }
+
     private fun candidate(kind: IntentKind, pkg: String = "com.example", label: String = "Example") =
         ComponentCandidate(ComponentRule(kind, pkg, "$pkg.${kind.name}Activity"), label, "Target")
 

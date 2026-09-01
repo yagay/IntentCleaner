@@ -35,6 +35,7 @@ fun RulesTab(state: MainState, vm: MainViewModel, onInspectFile: () -> Unit) {
                 showScopeDetails = true
                 vm.refreshModuleStatus()
             }
+            RuntimePanel(state, vm)
         }
         stickyHeader(key = "list-controls") {
             Surface(tonalElevation = 2.dp) {
@@ -47,7 +48,7 @@ fun RulesTab(state: MainState, vm: MainViewModel, onInspectFile: () -> Unit) {
                 Text("显示高级候选", Modifier.weight(1f))
                 Switch(state.showAdvanced, vm::setShowAdvanced)
             }
-            Text("普通列表为样例匹配，不等于任意文件的真实菜单；高级候选含宽泛或权限受限入口。已配置规则始终保留管理入口（仍受视图过滤影响）。",
+            Text("样例匹配不等于真实菜单。历史候选保留并标记未确认，不代表仍可打开；显示全部仍受分类、搜索和高级开关限制。本次会话已管理的高级项取消勾选后仍保留。",
                 Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             OutlinedButton(onClick = onInspectFile, enabled = !state.loading,
                 modifier = Modifier.padding(horizontal = 16.dp)) { Text("用实际文件检查打开方式") }
@@ -108,6 +109,7 @@ fun DashboardTabContent(
     var showScopeDetails by remember { mutableStateOf(false) }
     if (showScopeDetails) ScopeDialog(state.module, vm::requestScope, vm::refreshModuleStatus) { showScopeDetails = false }
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        RuntimePanel(state, vm)
         Text("全局清理模式", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -150,7 +152,7 @@ fun DashboardTabContent(
             showScopeDetails = true
             vm.refreshModuleStatus()
         }
-        Text("加载状态：由 LSPosed 提供。Hook 安装与查询命中：当前界面未实时核验，请查看诊断包。更新源码后需要重启手机；规则修改无需重启。", style = MaterialTheme.typography.bodySmall)
+        Text("运行版本由 LSPosed 提供；配置摘要由 system Hook 确认，不代表所有选择器行为均已验证。首次从 1.4.4 或更早版本迁移需重启；以后可尝试热更新，框架不支持或失败时仍需重启。", style = MaterialTheme.typography.bodySmall)
 
         Text("诊断日志", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {

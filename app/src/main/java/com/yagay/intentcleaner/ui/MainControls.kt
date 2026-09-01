@@ -171,6 +171,7 @@ internal fun ModuleStatusRow(state: MainState, onClick: () -> Unit) {
     val status = state.module
     val title = when {
         !status.connected -> "LSPosed 未连接"
+        status.outdated -> "旧模块仍在运行／更新未完成"
         status.error != null || (status.scopeKnown && status.missingScope.isNotEmpty()) -> "模块状态需要处理"
         status.resolverLoaded -> "检测到模块已加载"
         else -> "LSPosed 已连接"
@@ -179,7 +180,8 @@ internal fun ModuleStatusRow(state: MainState, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.labelLarge)
-            Text(state.syncStatus, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(state.syncStatus, style = MaterialTheme.typography.labelSmall,
+                color = if (status.outdated || !state.runtime.ready) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Icon(Icons.Rounded.ExpandMore, "查看模块状态")
     }

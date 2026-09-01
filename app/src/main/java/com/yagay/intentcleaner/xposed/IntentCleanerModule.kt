@@ -3,6 +3,12 @@ package com.yagay.intentcleaner.xposed
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ResolveInfo
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import com.yagay.intentcleaner.BuildConfig
+import com.yagay.intentcleaner.domain.RuntimeProtocol
+import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam
+import io.github.libxposed.api.XposedModuleInterface.HotReloadedParam
 import android.os.Binder
 import android.os.SystemClock
 import android.os.Process
@@ -36,7 +42,9 @@ class IntentCleanerModule : XposedModule() {
         val configured: Set<String>,
         val displayMode: DisplayMode,
         val priorities: PriorityConfig,
-        val diagnostic: Boolean
+        val diagnostic: Boolean,
+        val managerAppId: Int = -1,
+        val digest: String = ""
     ) {
         val selectedKinds: Set<IntentKind> = selectedKinds(configured)
         fun hasSelection(kind: IntentKind): Boolean = kind in selectedKinds
@@ -55,7 +63,7 @@ class IntentCleanerModule : XposedModule() {
     private var suppressedCount = 0L
     private var detailCount = 0
     private var suppressedDetails = 0L
-    @Volatile private var moduleAppId = -1
+    @Volatile private var nextPreferencePoll = 0L
     private val queryInProgress = ThreadLocal<Boolean>()
     private val installedMethods = ConcurrentHashMap.newKeySet<String>()
     private val tracedActions = ConcurrentHashMap.newKeySet<String>()
@@ -65,7 +73,7 @@ class IntentCleanerModule : XposedModule() {
     }
 
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == RuleRepository.KEY_CONFIG ||
+        if (key == null || key == RuleRepository.KEY_CONFIG ||
             (key in RuleRepository.SYNCED_KEYS && !preferences.contains(RuleRepository.KEY_CONFIG))) {
             refreshRulesSafely("preference changed")
         }
@@ -76,7 +84,63 @@ class IntentCleanerModule : XposedModule() {
         systemServer = param.isSystemServer
         // ApplicationInfo is not reliable during early system_server boot on every framework.
         // Identity is supplied with the atomic config by our app over framework-owned preferences.
-        record("MODULE_LOADED systemServer=$systemServer frameworkLog=direct-api moduleAppId=$moduleAppId")
+        record("MODULE_LOADED version=${BuildConfig.VERSION_CODE} systemServer=$systemServer frameworkLog=direct-api")
+    }
+
+    @Synchronized override fun onHotReloading(param: HotReloadingParam): Boolean {
+        // No module-owned threads/native hooks. Never transfer old-generation objects.
+        if (listenerRegistered) {
+            preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+            listenerRegistered = false
+        }
+        record("HOT_RELOAD_RETIRING version=${BuildConfig.VERSION_CODE}")
+        return true
+    }
+
+    override fun onHotReloaded(param: HotReloadedParam) {
+        processName = param.processName
+        systemServer = param.isSystemServer
+        initializePreferences()
+        val loaders = linkedSetOf<ClassLoader>()
+        try {
+            param.oldHookHandles.forEach { handle ->
+                val method = handle.executable as? Method
+                method?.declaringClass?.classLoader?.let(loaders::add)
+                val layer = when (handle.id) {
+                    "$HOOK_ID-system" -> Layer.SYSTEM
+                    "$HOOK_ID-resolver" -> Layer.RESOLVER
+                    else -> null
+                }
+                when {
+                    method != null && layer != null && isQueryIntentActivitiesMethod(method) -> {
+                        handle.replaceHook(queryHooker(layer))
+                        installedMethods.add("${method.declaringClass.name}#${method.toGenericString()}@$layer")
+                    }
+                    method != null && handle.id == "ic-final-order" -> {
+                        handle.replaceHook(orderHooker())
+                        installedMethods.add("ORDER#${method.toGenericString()}")
+                    }
+                    else -> handle.unhook()
+                }
+            }
+            // Use host executable loaders, not module/APK loaders, to discover newly supported hooks.
+            loaders.forEach { if (systemServer) installSystemServerQueryHooks(it) else installResolverClientHooks(it) }
+            check(installedMethods.any { it.endsWith(if (systemServer) "@SYSTEM" else "@RESOLVER") }) {
+                "No query hooks after reload; restart required"
+            }
+            record("HOT_RELOAD_READY version=${BuildConfig.VERSION_CODE} hooks=${installedMethods.size}")
+        } catch (failure: Throwable) {
+            // Per-hook replacement is atomic, the whole set is not. Do not report success on partial failure.
+            record("HOT_RELOAD_FAILED version=${BuildConfig.VERSION_CODE} error=${failure.javaClass.name}")
+            throw failure
+        }
+    }
+
+    @Synchronized private fun pollPreferences() {
+        val now = SystemClock.elapsedRealtime()
+        if (now < nextPreferencePoll) return
+        nextPreferencePoll = now + 2_000
+        refreshRulesSafely("query poll")
     }
 
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
@@ -147,43 +211,7 @@ class IntentCleanerModule : XposedModule() {
                     val key = "ORDER#${method.toGenericString()}"
                     if (installedMethods.add(key)) {
                         try {
-                            hook(method).setId("ic-final-order").intercept { chain ->
-                                val replacement = runCatching {
-                                    val receiver = chain.thisObject ?: return@runCatching null
-                                    val intent = receiver.javaClass.methods.firstOrNull {
-                                        it.name == "getIntent" && it.parameterCount == 0 && it.returnType == Intent::class.java
-                                    }?.invoke(receiver) as? Intent ?: run {
-                                        diagnostic("ORDER_SKIP reason=no_adapter_intent")
-                                        return@runCatching null
-                                    }
-                                    val kind = intent.intentKind() ?: run {
-                                        diagnostic("ORDER_SKIP reason=unclassified_intent")
-                                        return@runCatching null
-                                    }
-                                    val priorities = snapshot.priorities.apps[kind].orEmpty()
-                                    if (priorities.isEmpty()) {
-                                        diagnostic("ORDER_SKIP kind=$kind reason=no_priorities")
-                                        return@runCatching null
-                                    }
-                                    val items = chain.args[0] as? List<*> ?: return@runCatching null
-                                    val infos = items.map { item ->
-                                        requireNotNull(item)
-                                        if (item is ResolveInfo) item else
-                                            item.javaClass.getMethod("getResolveInfoAt", Int::class.javaPrimitiveType)
-                                                .invoke(item, 0) as ResolveInfo
-                                    }
-                                    val positions = prioritizeApps(items.indices.toList(), priorities,
-                                        { requireNotNull(infos[it].activityInfo).packageName },
-                                        { requireNotNull(infos[it].activityInfo.applicationInfo).uid / PER_USER_RANGE })
-                                    diagnostic("ORDER_APPLIED kind=$kind count=${items.size} changed=${positions != items.indices.toList()}")
-                                    chain.args.toTypedArray().also { args -> args[0] = positions.map { items[it] } }
-                                }.getOrElse {
-                                    diagnostic("ORDER_FAILED error=${it.javaClass.name}")
-                                    null
-                                }
-                                // Never catch/retry proceed: Android must execute exactly once.
-                                if (replacement == null) chain.proceed() else chain.proceed(replacement)
-                            }
+                            hook(method).setId("ic-final-order").intercept(orderHooker())
                             record("ORDER_HOOK_INSTALLED method=${method.toGenericString()}")
                         } catch (failure: Throwable) {
                             installedMethods.remove(key)
@@ -193,6 +221,47 @@ class IntentCleanerModule : XposedModule() {
                 }
             }.onFailure { record("ORDER_DISCOVERY_FAILED class=$name error=${it.javaClass.name}") }
         }
+    }
+
+    private fun orderHooker() = XposedInterface.Hooker { chain ->
+        pollPreferences()
+
+        val replacement = runCatching {
+            val receiver = chain.thisObject ?: return@runCatching null
+            val intent = receiver.javaClass.methods.firstOrNull {
+                it.name == "getIntent" && it.parameterCount == 0 && it.returnType == Intent::class.java
+            }?.invoke(receiver) as? Intent ?: run {
+                diagnostic("ORDER_SKIP reason=no_adapter_intent")
+                return@runCatching null
+            }
+            val kind = intent.intentKind() ?: run {
+                diagnostic("ORDER_SKIP reason=unclassified_intent")
+                return@runCatching null
+            }
+            val priorities = snapshot.priorities.apps[kind].orEmpty()
+            if (priorities.isEmpty()) {
+                diagnostic("ORDER_SKIP kind=$kind reason=no_priorities")
+                return@runCatching null
+            }
+            val items = chain.args[0] as? List<*> ?: return@runCatching null
+            val infos = items.map { item ->
+                requireNotNull(item)
+                if (item is ResolveInfo) item else
+                    item.javaClass.getMethod("getResolveInfoAt", Int::class.javaPrimitiveType)
+                        .invoke(item, 0) as ResolveInfo
+            }
+            val positions = prioritizeApps(items.indices.toList(), priorities,
+                { requireNotNull(infos[it].activityInfo).packageName },
+                { requireNotNull(infos[it].activityInfo.applicationInfo).uid / PER_USER_RANGE })
+            diagnostic("ORDER_APPLIED kind=$kind count=${items.size} changed=${positions != items.indices.toList()}")
+            chain.args.toTypedArray().also { args -> args[0] = positions.map { items[it] } }
+        }.getOrElse {
+            diagnostic("ORDER_FAILED error=${it.javaClass.name}")
+            null
+        }
+        // Never catch/retry proceed: Android must execute exactly once.
+        if (replacement == null) chain.proceed() else chain.proceed(replacement)
+
     }
 
     private fun installHook(method: Method, layer: Layer): Boolean {
@@ -215,6 +284,7 @@ class IntentCleanerModule : XposedModule() {
         val callerUid = if (layer == Layer.SYSTEM) Binder.getCallingUid() else -1
         queryInProgress.set(true)
         try {
+            pollPreferences()
             // Only call proceed once. Exceptions from Android/other modules must propagate.
             val original = chain.proceed()
             try {
@@ -231,6 +301,29 @@ class IntentCleanerModule : XposedModule() {
     private fun processQuery(chain: XposedInterface.Chain, original: Any?, layer: Layer, callerUid: Int): Any? {
         val outerIntent = chain.args.firstOrNull { it is Intent } as? Intent
         val intent = outerIntent?.selector ?: outerIntent
+        if (layer == Layer.SYSTEM && outerIntent?.action == RuntimeProtocol.ACTION &&
+            outerIntent.`package` == RuntimeProtocol.PACKAGE && outerIntent.selector == null) {
+            refreshRulesSafely("manager probe")
+            val applied = snapshot
+            if (ManagerIdentity.matches(callerUid, applied.managerAppId) && applied.digest.isNotEmpty()) {
+                val result = extractListResult(original) ?: return original
+                val ack = ResolveInfo().apply {
+                    activityInfo = ActivityInfo().apply {
+                        packageName = RuntimeProtocol.PACKAGE
+                        name = RuntimeProtocol.COMPONENT
+                        applicationInfo = ApplicationInfo().apply {
+                            packageName = RuntimeProtocol.PACKAGE
+                            uid = callerUid
+                        }
+                    }
+                    nonLocalizedLabel = "${BuildConfig.VERSION_CODE}:${applied.digest}"
+                }
+                record("CONFIG_ACK version=${BuildConfig.VERSION_CODE} digest=${applied.digest} callerUid=$callerUid")
+                return result.rebuild(listOf(ack))
+            }
+            return original
+        }
+        val moduleAppId = snapshot.managerAppId
         // The management UI must still discover hidden components so users can unhide them.
         if (layer == Layer.SYSTEM && !ManagerIdentity.valid(moduleAppId)) {
             diagnostic("FILTER_PAUSED reason=manager_identity_unknown open_module_app_to_sync")
@@ -345,13 +438,12 @@ class IntentCleanerModule : XposedModule() {
     @Synchronized private fun refreshRulesSafely(reason: String) {
         runCatching {
             preferences.getString(RuleRepository.KEY_CONFIG, null)?.let { encoded ->
+                val digest = RuntimeProtocol.digest(encoded)
+                if (snapshot.digest == digest) return@runCatching
                 val config = Json { ignoreUnknownKeys = true }.decodeFromString(ModuleConfig.serializer(), encoded).validated()
-                if (moduleAppId != config.managerAppId) {
-                    moduleAppId = config.managerAppId
-                    record("MANAGER_IDENTITY appId=$moduleAppId source=remote_config")
-                }
                 snapshot = RuleSnapshot(config.rules.map { it.id }.toSet(), config.mode,
-                    config.priorities, config.diagnostic)
+                    config.priorities, config.diagnostic, config.managerAppId, digest)
+                record("MANAGER_IDENTITY appId=${config.managerAppId} source=remote_config")
                 record("RULES_READ reason=$reason count=${snapshot.configured.size} mode=${config.mode} diagnostic=${config.diagnostic} atomic=true")
                 return@runCatching
             }
