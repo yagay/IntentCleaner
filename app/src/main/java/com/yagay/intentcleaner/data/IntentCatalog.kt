@@ -12,6 +12,7 @@ import com.yagay.intentcleaner.domain.ComponentCandidate
 import com.yagay.intentcleaner.domain.ComponentRule
 import com.yagay.intentcleaner.domain.IntentKind
 import com.yagay.intentcleaner.domain.intentKind
+import com.yagay.intentcleaner.domain.FilterPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -109,20 +110,29 @@ class IntentCatalog(private val context: Context) {
     private fun query(probe: Probe, discovery: Boolean = true): QueryResult {
         val kind = probe.intent.intentKind() ?: return QueryResult(emptyList(), 0)
         val flags = queryFlags(kind, discovery)
+        // PM applies per-user dynamic enabled overrides. Never ask for disabled entries,
+        // then never veto its result using the manifest's ActivityInfo.enabled default.
+        check(flags and (PackageManager.MATCH_DISABLED_COMPONENTS or
+            PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS) == 0)
         val raw = context.packageManager.queryIntentActivities(probe.intent, flags)
         val candidates = raw.mapNotNull { info ->
             val activity = info.activityInfo ?: return@mapNotNull null
             val rule = ComponentRule(kind, activity.packageName, activity.name)
             if (!rule.isValid()) return@mapNotNull null
-            val reasons = buildList {
-                if (!activity.exported) add("未导出")
-                if (!activity.enabled || !activity.applicationInfo.enabled) add("未启用")
-                activity.permission?.let {
-                    if (context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED) add("调用权限受限")
+            val managerUid = android.os.Process.myUid()
+            val targetUid = activity.applicationInfo?.uid ?: -1
+            val restricted = FilterPolicy.catalogRestricted(activity.exported, targetUid, managerUid)
+            // This is a management catalog, not a promise that our app can launch the target.
+            // The real source app can have different permissions. Keep those facts diagnostic.
+            val facts = buildList {
+                add("启用状态以系统查询为准；元数据 activityEnabled=${activity.enabled} appEnabled=${activity.applicationInfo?.enabled}")
+                add("exported=${activity.exported} targetUid=$targetUid managerUid=$managerUid")
+                if (restricted) add("非公开的其他应用组件；不放入普通目录")
+                activity.permission?.takeIf { it.isNotBlank() }?.let { permission ->
+                    val granted = runCatching { context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED }.getOrNull()
+                    add("permission=$permission managerGranted=${granted ?: "unknown"}；不代表实际来源应用权限")
                 }
             }
-            // Restrictions are diagnostic evidence, not a user-facing catalog mode.
-            val restricted = reasons.isNotEmpty()
             ComponentCandidate(
                 rule,
                 runCatching { activity.applicationInfo.loadLabel(context.packageManager).toString() }.getOrDefault(activity.packageName),
@@ -131,7 +141,7 @@ class IntentCatalog(private val context: Context) {
                     runCatching { activity.applicationInfo.loadIcon(context.packageManager) }.getOrNull()
                         ?: context.packageManager.defaultActivityIcon
                 },
-                evidence = listOf(probe.label + if (reasons.isEmpty()) "" else " [" + reasons.joinToString() + "]"),
+                evidence = listOf(probe.label + " flags=0x${flags.toString(16)}") + facts,
                 restricted = restricted, broadMatch = probe.broad
             )
         }
@@ -184,7 +194,7 @@ class IntentCatalog(private val context: Context) {
 
         fun merge(items: List<ComponentCandidate>): List<ComponentCandidate> =
             items.groupBy { it.rule.id }.values.map { matches ->
-                val first = matches.firstOrNull { !it.restricted && !it.unavailable } ?: matches.first()
+                val first = matches.firstOrNull { it.isCatalogCandidate } ?: matches.first()
                 first.copy(evidence = matches.flatMap { it.evidence }.distinct()
                     .sortedBy { !it.startsWith("实际文件检查") }.take(32),
                     restricted = matches.all { it.restricted }, unavailable = matches.all { it.unavailable },

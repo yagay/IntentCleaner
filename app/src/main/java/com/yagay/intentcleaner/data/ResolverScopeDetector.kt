@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
+import com.yagay.intentcleaner.domain.IntentKind
 
 data class ResolverHost(
     val packageName: String,
@@ -36,7 +37,9 @@ class ResolverScopeDetector(private val context: Context) {
         val warnings = mutableListOf<String>()
         val installed = KNOWN_PACKAGES.filter { packageName ->
             try {
-                pm.getApplicationInfo(packageName, 0).enabled
+                // This set means installed, not enabled or confirmed as a Resolver host.
+                pm.getApplicationInfo(packageName, 0)
+                true
             } catch (_: PackageManager.NameNotFoundException) {
                 false
             } catch (failure: Exception) {
@@ -54,7 +57,10 @@ class ResolverScopeDetector(private val context: Context) {
         )
         val resolverHosts = probes.mapNotNull { (scenario, intent) ->
             try {
-                val info = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo
+                val flags = if (intent.action == Intent.ACTION_PROCESS_TEXT)
+                    IntentCatalog.queryFlags(IntentKind.PROCESS_TEXT, discovery = false)
+                else PackageManager.MATCH_DEFAULT_ONLY
+                val info = pm.resolveActivity(intent, flags)?.activityInfo
                     ?: return@mapNotNull null
                 val system = info.applicationInfo.flags and
                     (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
@@ -63,7 +69,9 @@ class ResolverScopeDetector(private val context: Context) {
                 val activityName = info.targetActivity ?: info.name
                 val resolver = info.packageName == "com.android.intentresolver" ||
                     activityName.endsWith("ResolverActivity") || activityName.endsWith("ChooserActivity")
-                if (!system || !info.enabled || !info.applicationInfo.enabled || !resolver) return@mapNotNull null
+                // resolveActivity already applied dynamic component/app state for this user.
+                // A false manifest default does not mean the resolved component is disabled.
+                if (!system || !resolver) return@mapNotNull null
                 ResolverHost(info.packageName, info.name,
                     info.processName ?: info.applicationInfo.processName ?: info.packageName, setOf(scenario))
             } catch (failure: Exception) {

@@ -15,6 +15,39 @@ import java.io.Reader
 import java.io.StringReader
 
 class BehaviorRegressionTest {
+    @Test fun everyCategoryIgnoresMetadataAndManagerPermissionAsVisibilityVetoes() {
+        IntentKind.entries.forEach { kind ->
+            val resolved = candidate(kind).copy(
+                evidence = listOf("activityEnabled=false", "appEnabled=false", "managerGranted=false"),
+                restricted = com.yagay.intentcleaner.domain.FilterPolicy.catalogRestricted(true, 10001, 10002))
+            assertTrue(resolved.isCatalogCandidate)
+            assertEquals(1, groupCandidates(listOf(resolved), emptySet(), kind, "", UiFilter.ALL).size)
+            assertEquals(1, groupCandidates(listOf(resolved), setOf(resolved.rule), kind, "", UiFilter.ALL).size)
+        }
+    }
+
+    @Test fun menuLabelSearchFindsComponentUnderItsActualOwnerApp() {
+        val entry = candidate(IntentKind.PROCESS_TEXT, "com.google.android.googlequicksearchbox", "Google")
+            .copy(activityLabel = "Ask Gemini")
+        assertTrue(entry.matchesQuery("ask gemini"))
+        assertTrue(entry.matchesQuery("PROCESS_TEXTActivity"))
+        assertEquals(1, groupCandidates(listOf(entry), emptySet(), IntentKind.PROCESS_TEXT, "Gemini", UiFilter.ALL).size)
+        assertTrue(listOf(entry).any { it.isCatalogCandidate && it.matchesQuery("Gemini") })
+        assertFalse(entry.matchesQuery("absent label"))
+    }
+
+    @Test fun allDiscoveryQueriesExcludeDisabledAndUninstalledMatches() {
+        IntentKind.entries.forEach { kind ->
+            for (discovery in listOf(true, false)) {
+                val flags = com.yagay.intentcleaner.data.IntentCatalog.queryFlags(kind, discovery)
+                val excluded = android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS or
+                    android.content.pm.PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS or
+                    android.content.pm.PackageManager.MATCH_UNINSTALLED_PACKAGES
+                assertEquals(0, flags and excluded)
+            }
+        }
+    }
+
     @Test fun browserDiscoveryDoesNotUseMenuFlags() {
         val flags = com.yagay.intentcleaner.data.IntentCatalog.queryFlags(IntentKind.BROWSER, true)
         assertTrue(flags and android.content.pm.PackageManager.MATCH_ALL != 0)

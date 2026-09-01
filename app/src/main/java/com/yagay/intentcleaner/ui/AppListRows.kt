@@ -132,7 +132,7 @@ import com.yagay.intentcleaner.domain.ComponentRule
                     )
                     if (item.unavailable) Text("当前未找到组件 · 可取消规则", style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error)
-                    else if (item.restricted) Text("当前组件访问受限 · 可取消规则", style = MaterialTheme.typography.labelSmall)
+                    else if (item.restricted) Text("非公开组件 · 可取消已有规则", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }

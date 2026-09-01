@@ -110,9 +110,7 @@ fun groupCandidates(candidates: List<ComponentCandidate>, selected: Set<Componen
                 UiFilter.SHOW_SELECTED -> isSelected
             }
             catalogVisible(it, isSelected, uiFilter) && matchesUiFilter && (filter == null || it.rule.kind == filter) &&
-                (query.isBlank() || it.appLabel.contains(query, true) ||
-                    it.activityLabel.contains(query, true) || it.rule.packageName.contains(query, true) ||
-                    it.rule.className.contains(query, true))
+                it.matchesQuery(query)
         }.sortedBy { it.rule.kind.ordinal }
         if (matching.isEmpty()) null else AppGroup(pkg, all.first().appLabel, all.first().appIcon,
             matching)
@@ -149,7 +147,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 check(app.synchronize()) { app.runtime.value.message }
                 val found = app.catalog.inspectFile(uri)
                 check(app.synchronize()) { app.runtime.value.message }
-                mutableFileCheckStatus.value = "查询返回 ${found.size} 个组件，其中 ${found.count { !it.restricted }} 个未发现访问限制。结果仅用于诊断，不改变规则列表；明细见诊断包。"
+                mutableFileCheckStatus.value = "查询返回 ${found.size} 个组件，其中 ${found.count { it.isCatalogCandidate }} 个符合目录管理条件。实际启动还取决于来源应用权限；明细见诊断包，不改变规则列表。"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -473,4 +471,4 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 internal fun catalogVisible(item: ComponentCandidate, selected: Boolean, uiFilter: UiFilter): Boolean =
-    (!item.unavailable && !item.restricted) || (selected && uiFilter == UiFilter.SHOW_SELECTED)
+    item.isCatalogCandidate || (selected && uiFilter == UiFilter.SHOW_SELECTED)

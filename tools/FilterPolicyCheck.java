@@ -19,6 +19,15 @@ public final class FilterPolicyCheck {
             }
             checks++;
         }
+        for (int[] pair : pairs) {
+            for (boolean exported : new boolean[]{false, true}) {
+                boolean expected = !exported && !(pair[0] >= 0 && pair[0] == pair[1]);
+                if (FilterPolicy.catalogRestricted(exported, pair[1], pair[0]) != expected) {
+                    throw new AssertionError("catalog export/owner policy");
+                }
+                checks++;
+            }
+        }
         System.out.println("PASS: " + checks + " filter policy cases");
     }
 }

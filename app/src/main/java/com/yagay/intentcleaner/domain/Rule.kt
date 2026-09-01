@@ -43,10 +43,18 @@ data class ComponentCandidate(
     val activityLabel: String,
     val appIcon: Bitmap? = null,
     val evidence: List<String> = emptyList(),
+    // Only non-exported foreign components, not raw enabled fields or manager permissions.
     val restricted: Boolean = false,
     val unavailable: Boolean = false,
     val broadMatch: Boolean = false
-)
+) {
+    // One predicate shared by rules, priority suggestions and diagnostic summaries.
+    val isCatalogCandidate: Boolean get() = !unavailable && !restricted
+
+    fun matchesQuery(query: String): Boolean = query.isBlank() ||
+        appLabel.contains(query, true) || activityLabel.contains(query, true) ||
+        rule.packageName.contains(query, true) || rule.className.contains(query, true)
+}
 
 @Serializable
 data class RuleBackup(

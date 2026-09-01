@@ -35,13 +35,13 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
     // 同时对已优先和可添加列表进行全局搜索过滤
     val ranked = rankedRaw.mapIndexed { index, pkg -> index to pkg }.filter { (_, pkg) ->
         state.query.isBlank() || pkg.contains(state.query, true) ||
-            apps[pkg]?.any { it.appLabel.contains(state.query, true) || it.activityLabel.contains(state.query, true) } == true
+            apps[pkg]?.any { it.matchesQuery(state.query) } == true
     }
     
     val available = apps.keys.filter { packageName ->
-        packageName !in rankedRaw && apps.getValue(packageName).any { !it.unavailable && !it.restricted } &&
-            (state.query.isBlank() || packageName.contains(state.query, true) ||
-            apps.getValue(packageName).first().appLabel.contains(state.query, true))
+        packageName !in rankedRaw && apps.getValue(packageName).any {
+            it.isCatalogCandidate && it.matchesQuery(state.query)
+        }
     }.sortedBy { apps.getValue(it).first().appLabel.lowercase() }
 
     Column(Modifier.padding(horizontal = 16.dp)) {
@@ -98,7 +98,7 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text("${originalIndex + 1}. ${components.firstOrNull()?.appLabel ?: packageName}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (allHidden) Text("当前分类已隐藏", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            if (allHidden) Text("当前规则要求隐藏；实际效果以菜单为准", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                             else if (components.isEmpty() || components.all { it.unavailable }) Text("仅保留排序配置 · 本次未确认", style = MaterialTheme.typography.labelSmall)
                         }
                         IconButton(onClick = { vm.movePriority(kind, packageName, -1) }, enabled = originalIndex > 0) { Icon(Icons.Rounded.ArrowUpward, "上移") }
