@@ -43,7 +43,6 @@ import com.yagay.ListCleaner.domain.PriorityListFilter
 fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
     var kind by rememberSaveable { mutableStateOf(state.filter ?: IntentKind.SHARE) }
     var viewFilter by rememberSaveable { mutableStateOf(UiFilter.ALL) }
-    var showInfo by rememberSaveable { mutableStateOf(false) }
     var expandedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val rankedRaw = state.priorities.apps[kind].orEmpty()
     val groups = remember(state.candidates, state.selected, state.displayMode, kind, rankedRaw, state.query, viewFilter) {
@@ -110,10 +109,6 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
         item(key = "status") {
             ModuleStatusRow(state, compact = true) { vm.setDestination(Destination.DASHBOARD) }
             if (state.runtime.needsDecision) RuntimePanel(state, vm, showUpdateTools = false)
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("优先排序", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = { showInfo = !showInfo }) { Text("说明") }
-            }
         }
         stickyHeader(key = "controls") {
             Surface(tonalElevation = 2.dp) {
@@ -134,16 +129,8 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("长按已优先应用可拖动排序，松手保存；展开后也可上移、下移。",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("已保存 ${rankedRaw.size}/200 项", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-                    TextButton(onClick = { vm.resetPriority(kind) }, enabled = rankedRaw.isNotEmpty()) { Text("恢复系统顺序") }
-                }
-                if (hiddenSavedCount > 0) Text("$hiddenSavedCount 项因已清理或本次未匹配而暂不显示，排序配置保留。",
-                    style = MaterialTheme.typography.bodySmall)
-                if (rankedRaw.size >= 200) Text("当前分类已达 200 项上限，取消部分优先后可继续添加。",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                if (showInfo) Text("按分类保存。规则要求清理的组件不显示；应用仍有可见组件时保留。暂时隐藏的排序配置不删除，取消清理后恢复。分享适配推荐区及全部应用区，文本处理在查询出口排序；未知厂商菜单可能另行重排。联系人和调用方专属入口不调整。",
-                    style = MaterialTheme.typography.bodySmall)
+                Text("按分类保存。规则要求清理的组件不显示；应用仍有可见组件时保留。暂时隐藏的排序配置不删除，取消清理后恢复。分享适配推荐区及全部应用区，文本处理在查询出口排序；未知厂商菜单可能另行重排。联系人和调用方专属入口不调整。",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val compatibility = when {
                     !state.module.connected -> "LSPosed 未连接：可以保存，但尚未生效。"
                     state.module.detection.hosts.isEmpty() -> "未确认选择器宿主，当前设备排序能力未知。"
@@ -153,7 +140,11 @@ fun PriorityDialogContent(state: MainState, vm: MainViewModel) {
                 }
                 Text(if (!state.runtime.ready) state.runtime.message else if (kind == IntentKind.PROCESS_TEXT)
                     "文本候选按查询结果排序；来源应用若自行重排，仍可能不同。保存后重新打开文本菜单。" else compatibility,
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (hiddenSavedCount > 0) Text("$hiddenSavedCount 项因已清理或本次未匹配而暂不显示，排序配置保留。",
+                    style = MaterialTheme.typography.bodySmall)
+                if (rankedRaw.size >= 200) Text("当前分类已达 200 项上限，取消部分优先后可继续添加。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 if (state.error != null) Text("本次刷新未完整完成，详情见状态页", color = MaterialTheme.colorScheme.error)
             }
         }
