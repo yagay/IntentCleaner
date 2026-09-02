@@ -5,13 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.yagay.intentcleaner"
+    namespace = "com.yagay.ListCleaner"
     compileSdk {
         version = release(37) { minorApiLevel = 0 }
     }
 
     defaultConfig {
-        applicationId = "com.yagay.intentcleaner"
+        applicationId = "com.yagay.ListCleaner"
         minSdk = 31
         targetSdk = 37
         versionCode = 25

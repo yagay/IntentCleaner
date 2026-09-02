@@ -1,4 +1,4 @@
-import com.yagay.intentcleaner.domain.RuntimeProtocol;
+import com.yagay.ListCleaner.domain.RuntimeProtocol;
 
 public final class RuntimeProtocolCheck {
     private static int checks;

@@ -16,13 +16,13 @@
         <intent><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent>
     </queries>
     <application
-        android:name=".IntentCleanerApp"
+        android:name=".ListCleanerApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="Intentcleaner"
+        android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Intentcleaner">
+        android:theme="@style/Theme.ListCleaner">
 
         <activity android:name=".ui.MainActivity" android:exported="true">
             <intent-filter>

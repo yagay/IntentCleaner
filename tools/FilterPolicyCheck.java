@@ -1,4 +1,4 @@
-import com.yagay.intentcleaner.domain.FilterPolicy;
+import com.yagay.ListCleaner.domain.FilterPolicy;
 
 public final class FilterPolicyCheck {
     public static void main(String[] args) {

@@ -1,5 +1,5 @@
-import com.yagay.intentcleaner.domain.IntentClassification;
-import com.yagay.intentcleaner.domain.ManagerIdentity;
+import com.yagay.ListCleaner.domain.IntentClassification;
+import com.yagay.ListCleaner.domain.ManagerIdentity;
 import java.util.Objects;
 
 public final class ClassificationCheck {

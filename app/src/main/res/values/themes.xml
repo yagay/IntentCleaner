@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.Intentcleaner" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.ListCleaner" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

@@ -1,4 +1,4 @@
-import com.yagay.intentcleaner.ui.DiagnosticBuffer;
+import com.yagay.ListCleaner.ui.DiagnosticBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;

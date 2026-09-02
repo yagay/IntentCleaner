@@ -1,6 +1,11 @@
-# Intentcleaner 1.6.0
+# 列表清理 · List Cleaner
 
-包名 `com.yagay.intentcleaner`，版本码25。原意图过滤与排序使用 libxposed API102；磁贴、标准快捷方式创建入口、小部件使用用户明确确认的 Root 组件启停。不使用 IFW，不修改系统 XML。
+包名：`com.yagay.ListCleaner`。中文环境显示“列表清理”，其他语言显示“List Cleaner”。
+
+包名变更后作为新应用安装。请先在旧版导出规则备份，再在新版导入，并重新配置 LSPosed 作用域和 Root 授权；旧版模块应停用，避免同时过滤。Root 禁用状态属于系统，不随更名迁移或重置。
+
+
+包名 `com.yagay.ListCleaner`，版本码25。原意图过滤与排序使用 libxposed API102；磁贴、标准快捷方式创建入口、小部件使用用户明确确认的 Root 组件启停。不使用 IFW，不修改系统 XML。
 
 本次变更见 [CHANGES-1.6.0.md](CHANGES-1.6.0.md)。旧 CHANGES/AUDIT 仅为历史记录。
 
@@ -11,14 +16,14 @@
 - 磁贴：带 BIND_QUICK_SETTINGS_TILE 权限的标准 TileService。Wi-Fi、蓝牙等没有独立服务的内置磁贴不支持。
 - 快捷方式：匹配 CREATE_SHORTCUT 的公开 Activity/alias；不强制 DEFAULT 分类。不承诺覆盖 ShortX 私有项目、动态/固定快捷方式。
 - 小部件：匹配 APPWIDGET_UPDATE 且声明 android.appwidget.provider 元数据的接收器；不把任意后台服务列入。
-- 扫描和操作限定 Intentcleaner 当前安装用户，不跨用户操作。应用可见性、厂商实现或不规范声明仍可能限制发现结果。
-- android、SystemUI、Intentcleaner 本身和核心 UID 组件只展示。所属应用整体停用时也只展示，不顺带启用整个应用。
+- 扫描和操作限定 ListCleaner 当前安装用户，不跨用户操作。应用可见性、厂商实现或不规范声明仍可能限制发现结果。
+- android、SystemUI、ListCleaner 本身和核心 UID 组件只展示。所属应用整体停用时也只展示，不顺带启用整个应用。
 
 勾选表示组件禁用，取消勾选表示明确启用，不是恢复到操作前。无法判断原来由谁禁用，默认关闭的组件也会显示为禁用。每次更改都需确认；操作前重新查询组件并核对状态，Root 命令后回读系统覆盖值，再刷新列表。失败/超时不会自动重试，也不会用本地假勾选冒充成功。
 
 Root 只在明确更改时申请。禁用会影响所有使用该组件的地方，包括已固定磁贴或已放置小部件，应用进程也可能被系统结束；启用不保证恢复原位置。厂商选择器缓存可能需要关闭重开。组件禁用不等于卸载应用。
 
-清除 Intentcleaner 数据、卸载本模块不会撤销系统中的组件状态；重新安装后扫描可再次查看、逐项启用。规则 JSON 备份不保存或恢复 Root 组件状态。
+清除 ListCleaner 数据、卸载本模块不会撤销系统中的组件状态；重新安装后扫描可再次查看、逐项启用。规则 JSON 备份不保存或恢复 Root 组件状态。
 
 ## 从 1.5.0 升级
 
@@ -48,7 +53,7 @@ Root 只在明确更改时申请。禁用会影响所有使用该组件的地方
 
 推送 main 分支的源码或构建配置变更后自动运行；也可以进入 Actions → Build Debug APK → Run workflow 手动触发。无需自行配置 Android SDK 或签名 Secrets。
 
-工作流使用 Java17、SDK37、Build Tools36.0.0 和仓库中的 Gradle Wrapper 执行 `:app:assembleDebug`，不修改项目构建版本。成功后进入该次运行的 Artifacts，下载 `Intentcleaner-debug-运行编号-尝试编号`，解压取得 APK（保留14天）。失败可下载构建日志（保留7天），也可直接查看失败步骤。
+工作流使用 Java17、SDK37、Build Tools36.0.0 和仓库中的 Gradle Wrapper 执行 `:app:assembleDebug`，不修改项目构建版本。成功后进入该次运行的 Artifacts，下载 `ListCleaner-debug-运行编号-尝试编号`，解压取得 APK（保留14天）。失败可下载构建日志（保留7天），也可直接查看失败步骤。
 
 这是 Android 默认调试签名，不是正式发布签名；全新构建机生成的 Debug 密钥可能不同，不能保证覆盖已安装版本。签名不一致时不要直接卸载有重要数据的版本，应先备份。此工作流不发布 Release，不上传密钥，不运行设备测试；构建是否成功以 Actions 实际结果为准。
 
