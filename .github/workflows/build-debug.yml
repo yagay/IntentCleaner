@@ -51,11 +51,10 @@ jobs:
           sdkmanager "cmdline-tools;23.0" 2>&1 | tee sdk-tools.log
           sdk_manager="${ANDROID_HOME}/cmdline-tools/23.0/bin/sdkmanager"
           "$sdk_manager" --list --channel=3 > sdk-packages.log 2>&1
-          if ! awk -F '|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}' sdk-packages.log | grep -Fx 'platforms;android-37.0' > /dev/null; then
-            echo '::error::SDK repository does not advertise platforms;android-37.0. See sdk-packages.log.'
-            exit 1
-          fi
           "$sdk_manager" --channel=3 "platforms;android-37.0" "build-tools;36.0.0" "platform-tools" 2>&1 | tee sdk-install.log
+          # Verify installed files instead of parsing version-dependent CLI tables.
+          test -s "${ANDROID_HOME}/platforms/android-37.0/android.jar"
+          test -x "${ANDROID_HOME}/build-tools/36.0.0/aapt2"
 
       - name: Build Debug APK
         run: |
