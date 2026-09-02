@@ -125,7 +125,7 @@ class MainActivity : ComponentActivity() {
             topBar = {
                 MainToolbar(
                     state.query, searchExpanded, vm::setQuery,
-                    { searchExpanded = true }, closeSearch, { if (state.destination == Destination.TILES) vm.refreshTiles() else vm.refresh() },
+                    { searchExpanded = true }, closeSearch, { if (state.destination == Destination.TILES) vm.refreshComponents() else vm.refresh() },
                     { restore.launch(arrayOf("application/json", "text/plain")) },
                     { export.launch("Intentcleaner-backup.json") }
                 )
@@ -147,7 +147,7 @@ class MainActivity : ComponentActivity() {
                 when (state.destination) {
                     Destination.RULES -> RulesTab(state, vm)
                     Destination.PRIORITY -> PriorityTab(state, vm)
-                    Destination.TILES -> TileScreen(state, vm)
+                    Destination.TILES -> RootComponentsScreen(state, vm)
                     Destination.DASHBOARD -> DashboardTabContent(state, vm,
                         { restore.launch(arrayOf("application/json", "text/plain")) },
                         { export.launch("Intentcleaner-backup.json") },

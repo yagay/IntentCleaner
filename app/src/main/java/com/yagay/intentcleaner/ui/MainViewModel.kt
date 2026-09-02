@@ -10,9 +10,9 @@ import androidx.compose.material.icons.rounded.List
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.GridView
 import com.yagay.intentcleaner.domain.TileConfig
-import com.yagay.intentcleaner.domain.TilePolicy
-import com.yagay.intentcleaner.data.TileCatalog
-import com.yagay.intentcleaner.data.TileScan
+import com.yagay.intentcleaner.data.RootComponent
+import com.yagay.intentcleaner.data.RootComponentCatalog
+import com.yagay.intentcleaner.data.RootComponentScan
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yagay.intentcleaner.IntentCleanerApp
@@ -70,7 +70,7 @@ data class ModuleStatus(
 enum class Destination(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     RULES("规则", Icons.Rounded.List),
     PRIORITY("排序", Icons.Rounded.Sort),
-    TILES("磁贴", Icons.Rounded.GridView),
+    TILES("组件", Icons.Rounded.GridView),
     DASHBOARD("状态", Icons.Rounded.Dashboard)
 }
 
@@ -135,43 +135,48 @@ fun retainConfiguredCandidates(items: List<ComponentCandidate>, selected: Set<Co
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as IntentCleanerApp
-    private val mutableTileScan = MutableStateFlow(TileScan(emptyList(), "尚未扫描"))
-    val tileScan: StateFlow<TileScan> = mutableTileScan
-    private val mutableTilesLoading = MutableStateFlow(false)
-    val tilesLoading: StateFlow<Boolean> = mutableTilesLoading
-    private var tileScanJob: kotlinx.coroutines.Job? = null
+    private val rootCatalog = RootComponentCatalog(app)
+    private val mutableComponentScan = MutableStateFlow(RootComponentScan())
+    val componentScan: StateFlow<RootComponentScan> = mutableComponentScan
+    private val mutableComponentBusy = MutableStateFlow(false)
+    val componentBusy: StateFlow<Boolean> = mutableComponentBusy
+    private val mutableComponentMessage = MutableStateFlow<String?>(null)
+    val componentMessage: StateFlow<String?> = mutableComponentMessage
 
-    fun refreshTiles() {
-        if (tileScanJob?.isActive == true) return
-        tileScanJob = viewModelScope.launch {
-            mutableTilesLoading.value = true
+    fun refreshComponents() {
+        if (mutableComponentBusy.value) return
+        mutableComponentBusy.value = true
+        viewModelScope.launch {
             try {
-                mutableTileScan.value = withContext(Dispatchers.IO) { TileCatalog(app).scan() }
+                mutableComponentScan.value = withContext(Dispatchers.IO) { rootCatalog.scan() }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) {
-                mutableTileScan.value = mutableTileScan.value.copy(warning = "磁贴扫描失败：${failure.javaClass.simpleName}")
-            } finally { mutableTilesLoading.value = false }
+            catch (failure: Exception) { mutableComponentMessage.value = failure.message ?: "扫描失败" }
+            finally { mutableComponentBusy.value = false }
         }
-        refreshModuleStatus()
     }
 
-    fun setTilesEnabled(enabled: Boolean) {
-        if (!canEdit()) return
-        app.rules.setTiles(app.rules.tiles.value.copy(enabled = enabled))
-        refreshModuleStatus()
-    }
-
-    fun setTileHidden(spec: String, hidden: Boolean) {
-        if (!canEdit()) return
-        val id = TilePolicy.canonical(spec) ?: return
-        val current = app.rules.tiles.value
-        if (hidden && id !in current.hidden && current.hidden.size >= 512) {
-            error.value = "磁贴清理最多512项"; return
+    fun changeComponent(target: RootComponent, enable: Boolean) {
+        if (mutableComponentBusy.value) return
+        mutableComponentBusy.value = true
+        mutableComponentMessage.value = "正在请求 Root 并核验系统状态…"
+        viewModelScope.launch {
+            // Finish observation even if navigation/lifecycle cancels the awaiting UI.
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                try {
+                    mutableComponentMessage.value = rootCatalog.change(target, enable)
+                } catch (failure: Exception) {
+                    mutableComponentMessage.value = failure.message ?: "操作失败，请刷新核对"
+                } finally {
+                    runCatching { rootCatalog.scan() }.onSuccess { mutableComponentScan.value = it }
+                        .onFailure {
+                            mutableComponentScan.value = RootComponentScan(warning = "操作后扫描失败，请刷新；不使用旧状态")
+                        }
+                    mutableComponentBusy.value = false
+                }
+            }
         }
-        app.rules.setTiles(current.copy(hidden = if (hidden) current.hidden + id else current.hidden - id))
     }
 
-    fun clearTileRules() { if (canEdit()) app.rules.setTiles(app.rules.tiles.value.copy(hidden = emptySet())) }
     private val mutableUpdating = MutableStateFlow(false)
     val updating: StateFlow<Boolean> = mutableUpdating
     private val mutableUpdateMessage = MutableStateFlow<String?>(null)
@@ -236,7 +241,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     priorities = config.priorities, diagnosticMode = config.diagnostic, tiles = config.tiles,
                     runtime = app.runtime.value,
                     syncStatus = app.syncStatus.value
-                ), mutableTileScan.value)
+                ), mutableComponentScan.value, rootCatalog.lastOperation)
                 val ready = requireNotNull(report)
                 withContext(Dispatchers.IO) {
                     val output = app.contentResolver.openOutputStream(uri, "wt") ?: error("无法创建诊断包")
@@ -398,7 +403,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun readModuleStatus(service: XposedService?): ModuleStatus {
         val generation = ++statusGeneration
         val status = withContext(Dispatchers.IO) {
-            val detection = scopeDetector.detect(includeTiles = app.rules.tiles.value.enabled)
+            val detection = scopeDetector.detect()
             var result = ModuleStatus(connected = service != null, detection = detection)
             if (service != null) {
                 try {

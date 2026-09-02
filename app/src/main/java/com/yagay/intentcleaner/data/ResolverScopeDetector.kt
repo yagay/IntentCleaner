@@ -33,7 +33,7 @@ data class ScopeDetection(
 /** Resolve probes without launching activities. Ordinary default handlers are not Resolver hosts. */
 class ResolverScopeDetector(private val context: Context) {
     @Suppress("DEPRECATION")
-    fun detect(includeTiles: Boolean = false): ScopeDetection {
+    fun detect(): ScopeDetection {
         val pm = context.packageManager
         val warnings = mutableListOf<String>()
         val installed = KNOWN_PACKAGES.filter { packageName ->
@@ -85,10 +85,7 @@ class ResolverScopeDetector(private val context: Context) {
         // Modern LSPosed exposes system_server as the virtual `system` scope. It is not an
         // installed APK and therefore cannot be discovered through PackageManager.
         val systemHost = ResolverHost("system", "PackageManagerService", "system", setOf("全局 Intent 解析"))
-        val tileHosts = if (includeTiles && "com.android.systemui" in installed)
-            listOf(ResolverHost("com.android.systemui", "QuickSettingsEditor", "com.android.systemui", setOf("磁贴编辑列表（适配待验证）")))
-        else emptyList()
-        return ScopeDetection(listOf(systemHost) + resolverHosts + tileHosts, installed + "system", warnings)
+        return ScopeDetection(listOf(systemHost) + resolverHosts, installed + "system", warnings)
     }
 
     companion object {
