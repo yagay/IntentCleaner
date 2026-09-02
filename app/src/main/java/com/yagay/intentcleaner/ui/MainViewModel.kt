@@ -155,17 +155,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun changeComponent(target: RootComponent, enable: Boolean) {
+    fun changeComponent(target: RootComponent, enable: Boolean) = changeComponents(listOf(target), enable)
+
+    fun changeComponents(visibleTargets: List<RootComponent>, enable: Boolean) {
         if (mutableComponentBusy.value) return
+        // Snapshot only the visible, editable components. A component can match multiple kinds.
+        val targets = visibleTargets.filter { it.blocked == null && it.enabled != null && it.enabled != enable }
+            .distinctBy { "${it.user}|${it.component.flattenToString()}" }
+        if (targets.isEmpty()) return
         mutableComponentBusy.value = true
         mutableComponentMessage.value = "正在请求 Root 并核验系统状态…"
         viewModelScope.launch {
             // Finish observation even if navigation/lifecycle cancels the awaiting UI.
             withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                var completed = 0
                 try {
-                    mutableComponentMessage.value = rootCatalog.change(target, enable)
+                    var result = ""
+                    for (target in targets) {
+                        mutableComponentMessage.value = "正在${if (enable) "启用" else "禁用"} ${completed + 1}/${targets.size}：${target.label}"
+                        result = rootCatalog.change(target, enable)
+                        completed++
+                    }
+                    mutableComponentMessage.value = if (targets.size == 1) result
+                        else "已核验：${completed} 个组件已${if (enable) "启用" else "禁用"}；请重新打开目标选择器"
                 } catch (failure: Exception) {
-                    mutableComponentMessage.value = failure.message ?: "操作失败，请刷新核对"
+                    // Stop on failure: do not repeatedly prompt for Root or claim an atomic batch.
+                    mutableComponentMessage.value = "已完成 $completed/${targets.size}，操作已停止：${failure.message ?: "操作失败"}。失败项请核对系统状态；剩余项未执行，已完成项不回滚。"
                 } finally {
                     runCatching { rootCatalog.scan() }.onSuccess { mutableComponentScan.value = it }
                         .onFailure {
