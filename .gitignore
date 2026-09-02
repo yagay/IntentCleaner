@@ -4,3 +4,9 @@
 **/build/
 local.properties
 *.iml
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+ANDROID_SIGNING_JSON*

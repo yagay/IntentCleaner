@@ -5,7 +5,7 @@
 包名变更后作为新应用安装。请先在旧版导出规则备份，再在新版导入，并重新配置 LSPosed 作用域和 Root 授权；旧版模块应停用，避免同时过滤。Root 禁用状态属于系统，不随更名迁移或重置。
 
 
-包名 `com.yagay.ListCleaner`，版本码25。原意图过滤与排序使用 libxposed API102；磁贴、标准快捷方式创建入口、小部件使用用户明确确认的 Root 组件启停。不使用 IFW，不修改系统 XML。
+包名 `com.yagay.ListCleaner`，版本码26。原意图过滤与排序使用 libxposed API102；磁贴、标准快捷方式创建入口、小部件使用用户明确确认的 Root 组件启停。不使用 IFW，不修改系统 XML。
 
 本次变更见 [CHANGES-1.6.0.md](CHANGES-1.6.0.md)。旧 CHANGES/AUDIT 仅为历史记录。
 
@@ -60,3 +60,7 @@ Root 只在明确更改时申请。禁用会影响所有使用该组件的地方
 ## 本地构建环境
 
 保持 Gradle 9.4.1、AGP 9.2.0、Compile/Target SDK37、Min SDK31、Java/JVM17、libxposed API/Service102.0.0。SDK、签名及环境兼容由本地配置，不提交 local.properties 或私钥。
+
+## Release 签名与发布
+
+正式版构建和 GitHub Releases 发布见 [docs/RELEASE.md](docs/RELEASE.md)。首次需要配置一个私密的 `ANDROID_SIGNING_JSON` Secret，后续复用固定签名。
