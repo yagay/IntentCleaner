@@ -70,7 +70,15 @@ fun RulesTab(state: MainState, vm: MainViewModel) {
 private fun SummaryRow(state: MainState) {
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text("应用列表 · ${state.groups.size}", style = MaterialTheme.typography.labelLarge)
-        Text("勾选当前分类组件；全部视图不会因勾选而隐藏应用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("本页用于清理分享、多文件分享、打开方式、浏览器和文本处理等候选列表中的应用入口，不会停用或卸载应用。",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(when (state.displayMode) {
+            DisplayMode.HIDE_SELECTED -> "当前为“隐藏选中”：规则生效后，勾选的组件从对应候选列表中隐藏；取消勾选恢复默认显示。"
+            DisplayMode.SHOW_SELECTED -> "当前为“只显示选中”：规则生效后，对应分类保留勾选的组件，隐藏其他组件。"
+            DisplayMode.SHOW_ALL -> "当前为“全部显示”：暂停清理系统候选列表，勾选只保存配置，恢复清理模式后生效。"
+        }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("勾选应用可批量选择当前分类及搜索条件下显示的组件；展开可逐项选择。“查看”只筛选本页列表，不改变清理规则。",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (state.displayMode == DisplayMode.SHOW_ALL) {
             Text(if (state.runtime.ready) "system 已确认暂停过滤，勾选及排序保留" else "本地已选择暂停，尚未确认系统已应用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         } else if (state.displayMode == DisplayMode.SHOW_SELECTED) {
