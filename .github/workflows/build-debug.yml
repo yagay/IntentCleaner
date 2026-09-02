@@ -48,14 +48,14 @@ jobs:
       - name: Install project SDK
         run: |
           set -o pipefail
-          sdkmanager "cmdline-tools;latest" 2>&1 | tee sdk-tools.log
-          sdk_manager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          sdkmanager "cmdline-tools;23.0" 2>&1 | tee sdk-tools.log
+          sdk_manager="${ANDROID_HOME}/cmdline-tools/23.0/bin/sdkmanager"
           "$sdk_manager" --list --channel=3 > sdk-packages.log 2>&1
-          if ! awk -F '|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}' sdk-packages.log | grep -Fx 'platforms;android-37' > /dev/null; then
-            echo '::error::SDK repository does not advertise platforms;android-37, even with preview channels. See sdk-packages.log. Project SDK was not changed.'
+          if ! awk -F '|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}' sdk-packages.log | grep -Fx 'platforms;android-37.0' > /dev/null; then
+            echo '::error::SDK repository does not advertise platforms;android-37.0. See sdk-packages.log.'
             exit 1
           fi
-          "$sdk_manager" --channel=3 "platforms;android-37" "build-tools;36.0.0" "platform-tools" 2>&1 | tee sdk-install.log
+          "$sdk_manager" --channel=3 "platforms;android-37.0" "build-tools;36.0.0" "platform-tools" 2>&1 | tee sdk-install.log
 
       - name: Build Debug APK
         run: |

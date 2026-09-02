@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.yagay.intentcleaner"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
 
     defaultConfig {
         applicationId = "com.yagay.intentcleaner"
