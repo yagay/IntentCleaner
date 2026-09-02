@@ -35,8 +35,8 @@ android {
         applicationId = "com.yagay.ListCleaner"
         minSdk = 31
         targetSdk = 37
-        versionCode = 26
-        versionName = "1.6.1"
+        versionCode = 27
+        versionName = "1.6.2"
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
