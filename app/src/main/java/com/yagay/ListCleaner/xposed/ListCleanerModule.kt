@@ -487,7 +487,7 @@ class ListCleanerModule : XposedModule() {
             values.filter { value ->
                 val info = value as? ResolveInfo ?: return@filter true
                 val activity = info.activityInfo ?: return@filter true
-                // Preserve same-app/internal queries, mirroring TigerInTheWall sender safety.
+                // Preserve targets owned by the caller so filtering cannot break internal queries.
                 if (FilterPolicy.sameCaller(callerUid, activity.applicationInfo?.uid ?: -1)) {
                     diagnostic("KEEP_SAME_APP $layer $kind ${activity.packageName}/${activity.name} callerUid=$callerUid", detail = true)
                     return@filter true
