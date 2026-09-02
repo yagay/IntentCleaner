@@ -45,11 +45,6 @@ fun RootComponentsScreen(state: MainState, vm: MainViewModel) {
     // Package and user identify an app; display labels need not be unique.
     val groups = visible.groupBy { "${it.user}|${it.component.packageName}" }.entries
         .sortedWith(compareBy({ it.value.first().owner.lowercase() }, { it.key }))
-    fun filterTitle(filter: UiFilter) = when (filter) {
-        UiFilter.ALL -> "全部"
-        UiFilter.SHOW_SELECTED -> "已禁用"
-        UiFilter.HIDE_SELECTED -> "未禁用"
-    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "title") {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -58,7 +53,7 @@ fun RootComponentsScreen(state: MainState, vm: MainViewModel) {
         }
         stickyHeader(key = "controls") {
             Surface(tonalElevation = 2.dp) {
-                Column {
+                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
                     LazyRow(contentPadding = PaddingValues(horizontal = 12.dp)) {
                         items(listOf<CleanupKind?>(null) + CleanupKind.entries) { entry ->
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -72,15 +67,15 @@ fun RootComponentsScreen(state: MainState, vm: MainViewModel) {
                         }
                     }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("查看", style = MaterialTheme.typography.labelMedium)
+                        Text("查看", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Box {
                             TextButton(onClick = { filterMenu = true }) {
-                                Text(filterTitle(viewFilter))
+                                Text(viewFilter.title)
                                 Icon(Icons.Rounded.ExpandMore, null, Modifier.size(18.dp))
                             }
                             DropdownMenu(expanded = filterMenu, onDismissRequest = { filterMenu = false }) {
                                 UiFilter.entries.forEach { filter ->
-                                    DropdownMenuItem(text = { Text(filterTitle(filter)) },
+                                    DropdownMenuItem(text = { Text(filter.title) },
                                         leadingIcon = { if (viewFilter == filter) Icon(Icons.Rounded.Check, null) },
                                         onClick = { viewFilter = filter; filterMenu = false })
                                 }
