@@ -1,0 +1,207 @@
+name: Build and Publish Release
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'app/**'
+      - '*.gradle.kts'
+      - '.github/workflows/build-release.yml'
+      - 'tools/prepare-release-signing.py'
+  push:
+    branches: [main]
+    paths:
+      - 'app/build.gradle.kts'
+      - '.github/workflows/build-release.yml'
+      - 'tools/prepare-release-signing.py'
+      - 'signing/release-certificate.sha256'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Compile Release without signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "cmdline-tools;23.0" > sdk-tools.log 2>&1
+          "${ANDROID_HOME}/cmdline-tools/23.0/bin/sdkmanager" --channel=3 "platforms;android-37.0" "build-tools;36.0.0" > sdk-install.log 2>&1
+          bash ./gradlew --no-daemon --console=plain --stacktrace -PallowUnsignedRelease=true :app:assembleRelease 2>&1 | tee release-build.log
+      - name: Upload compilation diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-validation-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            sdk-tools.log
+            sdk-install.log
+            release-build.log
+            app/build/outputs/mapping/release/missing_rules.txt
+          retention-days: 7
+  release:
+    permissions:
+      contents: write
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Prepare fixed Release signing
+        id: signing
+        env:
+          ANDROID_SIGNING_JSON: ${{ secrets.ANDROID_SIGNING_JSON }}
+        run: python3 tools/prepare-release-signing.py
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install project SDK
+        run: |
+          set -euo pipefail
+          sdkmanager "cmdline-tools;23.0" > sdk-tools.log 2>&1
+          sdk_manager="${ANDROID_HOME}/cmdline-tools/23.0/bin/sdkmanager"
+          "$sdk_manager" --channel=3 "platforms;android-37.0" "build-tools;36.0.0" "platform-tools" > sdk-install.log 2>&1
+          test -s "${ANDROID_HOME}/platforms/android-37.0/android.jar"
+          test -x "${ANDROID_HOME}/build-tools/36.0.0/apksigner"
+
+      - name: Compile optimized Release APK
+        run: |
+          set -euo pipefail
+          # With no Secret, validate R8/resource compilation only. Publication is gated below.
+          bash ./gradlew --no-daemon --console=plain --stacktrace -PallowUnsignedRelease=true :app:assembleRelease 2>&1 | tee release-build.log
+
+      - name: Require the fixed signing key before publication
+        env:
+          SIGNING_CONFIGURED: ${{ steps.signing.outputs.configured }}
+        run: |
+          if [[ "$SIGNING_CONFIGURED" != true ]]; then
+            echo '::error::Release compilation passed, but signing and publication require the ANDROID_SIGNING_JSON repository Secret. See docs/RELEASE.md.'
+            exit 1
+          fi
+
+      - name: Verify signature and prepare release assets
+        id: assets
+        run: |
+          set -euo pipefail
+          build_tools="${ANDROID_HOME}/build-tools/36.0.0"
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -s "$apk"
+          mkdir -p release-output
+          "$build_tools/apksigner" verify --verbose --print-certs "$apk" > release-output/signature.txt
+          "$build_tools/zipalign" -c -P 16 4 "$apk"
+          "$build_tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/release-badging.txt"
+          python3 - <<'PY'
+          import hashlib, os, re, shutil
+          from pathlib import Path
+          sig = Path('release-output/signature.txt').read_text()
+          match = re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', sig)
+          expected = Path('signing/release-certificate.sha256').read_text().strip().lower()
+          if not match or match.group(1).lower() != expected:
+              raise SystemExit('APK certificate differs from the pinned release certificate')
+          text = (Path(os.environ['RUNNER_TEMP']) / 'release-badging.txt').read_text()
+          package = re.search(r"package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", text)
+          if not package or package.group(1) != 'com.yagay.ListCleaner':
+              raise SystemExit('Unexpected APK identity')
+          version = package.group(3)
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('Expected a stable semantic version')
+          if "application-debuggable" in text:
+              raise SystemExit('Refusing to publish a debuggable APK')
+          name = f'ListCleaner-{version}-release.apk'
+          output = Path('release-output') / name
+          shutil.copyfile('app/build/outputs/apk/release/app-release.apk', output)
+          digest = hashlib.sha256(output.read_bytes()).hexdigest()
+          Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {name}\n')
+          Path('release-notes.md').write_text(
+              f'列表清理 / List Cleaner {version}\n\n'
+              '- 使用固定的 Release 签名，后续正式版本可使用同一签名覆盖升级。\n'
+              '- 宝石蓝列表与扫帚图标，支持圆形和系统主题图标。\n'
+              '- 启用代码混淆及资源压缩，适用于 Android 12 及以上。\n\n'
+              '旧 Debug 版签名可能不同；安装前请导出规则备份。\n\n'
+              f'版本码：{package.group(2)}\n\n'
+              f'签名证书 SHA-256：`{expected}`\n\n'
+              f'源码提交：`{os.environ["GITHUB_SHA"]}`\n')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:
+              stream.write(f'tag=v{version}\nversion={version}\n')
+          PY
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ListCleaner-release-${{ steps.assets.outputs.version }}
+          path: release-output/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.assets.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.assets.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists; increase versionCode/versionName instead of overwriting it."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" release-output/*.apk release-output/SHA256SUMS.txt release-output/signature.txt \
+            --target "$GITHUB_SHA" --title "List Cleaner $RELEASE_VERSION" --notes-file release-notes.md
+
+      - name: Remove private signing material
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/listcleaner-signing"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-build-log-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            sdk-tools.log
+            sdk-install.log
+            release-build.log
+            app/build/outputs/mapping/release/mapping.txt
+            app/build/outputs/mapping/release/missing_rules.txt
+          if-no-files-found: ignore
+          retention-days: 7
