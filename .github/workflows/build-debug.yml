@@ -41,9 +41,21 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install project SDK
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "platform-tools"
+        run: |
+          set -o pipefail
+          sdkmanager "cmdline-tools;latest" 2>&1 | tee sdk-tools.log
+          sdk_manager="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          "$sdk_manager" --list --channel=3 > sdk-packages.log 2>&1
+          if ! awk -F '|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}' sdk-packages.log | grep -Fx 'platforms;android-37' > /dev/null; then
+            echo '::error::SDK repository does not advertise platforms;android-37, even with preview channels. See sdk-packages.log. Project SDK was not changed.'
+            exit 1
+          fi
+          "$sdk_manager" --channel=3 "platforms;android-37" "build-tools;36.0.0" "platform-tools" 2>&1 | tee sdk-install.log
 
       - name: Build Debug APK
         run: |
@@ -64,6 +76,9 @@ jobs:
         with:
           name: debug-build-log-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
+            sdk-tools.log
+            sdk-packages.log
+            sdk-install.log
             debug-build.log
             app/build/reports/
             build/reports/
