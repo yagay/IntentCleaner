@@ -488,6 +488,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetPriority(kind: IntentKind) { if (canEdit()) app.rules.setPriority(kind, emptyList()) }
 
+    fun movePriorityTo(kind: IntentKind, packageName: String, target: String, visible: List<String>, expected: List<String>) {
+        if (!canEdit()) return
+        val current = app.rules.priorities.value.apps[kind].orEmpty()
+        // A drag is a snapshot. Never overwrite a reset/import/edit that occurred during it.
+        if (current != expected) return
+        val updated = com.yagay.ListCleaner.domain.moveVisiblePriorityTo(current, visible, packageName, target)
+        if (updated != current) app.rules.setPriority(kind, updated)
+    }
+
     fun requestScope() {
         if (scopeRequestInFlight) return
         scopeRequestInFlight = true

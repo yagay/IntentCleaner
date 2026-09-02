@@ -11,13 +11,13 @@ class PriorityListTest {
                        query: String = "", selected: Set<ComponentRule> = emptySet()) =
         priorityAppGroups(items, selected, DisplayMode.HIDE_SELECTED, IntentKind.SHARE, saved, query, filter)
 
-    @Test fun allViewKeepsAlphabeticPositionsWhenCheckedOrUnchecked() {
+    @Test fun checkingMovesIntoPriorityOrderAndUncheckingRestoresDefaultPosition() {
         val items = listOf(item("b"), item("a"), item("c"))
-        val expected = listOf("a", "b", "c")
-        for (saved in listOf(emptyList(), listOf("c"), listOf("c", "a"))) {
-            assertEquals(expected, groups(items, saved).map { it.packageName })
-        }
-        assertEquals(listOf(2, null, 1), groups(items, listOf("c", "a")).map { it.rank })
+        assertEquals(listOf("a", "b", "c"), groups(items, emptyList()).map { it.packageName })
+        assertEquals(listOf("c", "a", "b"), groups(items, listOf("c")).map { it.packageName })
+        assertEquals(listOf("c", "b", "a"), groups(items, listOf("c", "b")).map { it.packageName })
+        assertEquals(listOf("b", "a", "c"), groups(items, listOf("b")).map { it.packageName })
+        assertEquals(listOf(1, 2, null), groups(items, listOf("c", "a")).map { it.rank })
     }
 
     @Test fun selectedFollowsSavedOrderAndUnselectedRemainsAlphabetic() {
