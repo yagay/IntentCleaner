@@ -64,7 +64,7 @@ object DiagnosticCollector {
                 // Capture volatile buffers first, before slower file and package inspection.
                 zip.addCapture("logcat/buffer-state.txt", root("logcat -g -b all", 128 * 1024))
                 zip.addCapture("root/root-status.txt", root("id; getenforce; command -v su; echo KERNEL=$(uname -a)"))
-                zip.addCapture("logcat/intentcleaner.txt", root(
+                zip.addCapture("logcat/ListCleaner.txt", root(
                     "logcat -d -v threadtime -b all ListCleaner:V ListCleaner.Diagnostic:V " +
                     "AndroidRuntime:E PackageManager:V PackageManagerService:V ActivityTaskManager:I " +
                         "LSPosedFramework:V LSPosedService:V ResolverActivity:V ChooserActivity:V " +

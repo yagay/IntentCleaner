@@ -1,4 +1,4 @@
-# Intentcleaner 1.4.7 (21)
+# ListCleaner 1.4.7 (21)
 
 ## 管理方式简化
 
