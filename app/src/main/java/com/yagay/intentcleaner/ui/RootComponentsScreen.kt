@@ -25,7 +25,7 @@ fun RootComponentsScreen(state: MainState, vm: MainViewModel) {
     val message by vm.componentMessage.collectAsState()
     var kind by remember { mutableStateOf(CleanupKind.TILE) }
     var disabledOnly by remember { mutableStateOf(false) }
-    var expandedApps by remember { mutableStateOf(emptySet<String>()) }
+    var expandedAppKey by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { vm.refreshComponents() }
     val visible = scan.items.filter {
         it.kind == kind && (!disabledOnly || it.enabled == false) &&
@@ -62,10 +62,9 @@ fun RootComponentsScreen(state: MainState, vm: MainViewModel) {
             groups.forEach { (appKey, components) ->
                 val first = components.first()
                 val expansionKey = "${kind.name}|$appKey"
-                val expanded = expansionKey in expandedApps
+                val expanded = expandedAppKey == expansionKey
                 val onExpand = {
-                    expandedApps = if (expansionKey in expandedApps) expandedApps - expansionKey
-                        else expandedApps + expansionKey
+                    expandedAppKey = if (expandedAppKey == expansionKey) null else expansionKey
                 }
                 item(key = "app|$expansionKey") {
                     Row(Modifier.fillMaxWidth()
