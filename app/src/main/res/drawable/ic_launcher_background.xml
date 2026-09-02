@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
-    android:width="108dp" android:height="108dp"
-    android:viewportWidth="108" android:viewportHeight="108">
-    <path android:pathData="M0,0 H108 V108 H0 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient android:type="linear"
-                android:startX="18" android:startY="18"
-                android:endX="90" android:endY="90">
-                <item android:offset="0" android:color="#66DDB7" />
-                <item android:offset="0.5" android:color="#3CC5A3" />
-                <item android:offset="1" android:color="#20AF92" />
-            </gradient>
-        </aapt:attr>
-    </path>
-</vector>
+<!-- Full-bleed artwork includes its sapphire background and satin shadows.
+     Padding keeps the meaningful artwork inside the adaptive icon safe circle. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient android:angle="315"
+                android:startColor="#287AF0" android:endColor="#0750D6" />
+        </shape>
+    </item>
+    <item>
+        <inset android:insetLeft="10%" android:insetTop="10%"
+            android:insetRight="10%" android:insetBottom="10%">
+            <bitmap android:src="@drawable/ic_launcher_artwork"
+                android:gravity="fill" android:filter="true" />
+        </inset>
+    </item>
+</layer-list>

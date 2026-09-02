@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Keep the list, broom and sparkle inside the adaptive icon safe circle.
-     Only the decorative sweep extends beyond it. The launcher supplies the mask. -->
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="20%" android:insetTop="20%"
-    android:insetRight="20%" android:insetBottom="20%">
-    <bitmap android:src="@drawable/ic_launcher_artwork"
-        android:gravity="fill" android:filter="true" />
-</inset>
+<!-- The approved artwork is composed in the background layer, including shadows. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#00000000" />
+</shape>
