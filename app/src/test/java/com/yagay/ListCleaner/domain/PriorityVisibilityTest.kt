@@ -47,4 +47,20 @@ class PriorityVisibilityTest {
         assertEquals(saved, moveVisiblePriority(saved, visible, "absent", 1))
         assertEquals(saved, moveVisiblePriority(saved, visible, "b", 2))
     }
+    @Test fun dragInsertsAtDistantPositionWithoutChangingHiddenSlots() {
+        val saved = listOf("a", "hidden", "b", "c", "missing", "d")
+        val visible = listOf("a", "b", "c", "d")
+        assertEquals(listOf("b", "hidden", "c", "d", "missing", "a"),
+            moveVisiblePriorityTo(saved, visible, "a", "d"))
+        assertEquals(listOf("d", "hidden", "a", "b", "missing", "c"),
+            moveVisiblePriorityTo(saved, visible, "d", "a"))
+        assertEquals(listOf("a", "hidden", "c", "b", "missing", "d"),
+            moveVisiblePriorityTo(saved, visible, "b", "c"))
+        assertEquals(listOf("d", "hidden", "b", "c", "missing", "a"),
+            moveVisiblePriorityTo(saved, listOf("a", "d"), "d", "a"))
+        assertEquals(saved, moveVisiblePriorityTo(saved, visible, "a", "a"))
+        assertEquals(saved, moveVisiblePriorityTo(saved, visible, "hidden", "a"))
+        assertEquals(saved, moveVisiblePriorityTo(saved, visible, "a", "unselected"))
+        assertEquals(saved, moveVisiblePriorityTo(saved, emptyList(), "a", "b"))
+    }
 }

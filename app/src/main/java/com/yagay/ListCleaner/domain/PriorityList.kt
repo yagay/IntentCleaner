@@ -8,7 +8,7 @@ data class PriorityAppGroup(
     val rank: Int?
 )
 
-/** All/unselected stay alphabetic; selected follows the effective saved order. */
+/** Priority apps lead in saved order; remaining apps use their default alphabetic order. */
 fun priorityAppGroups(
     candidates: List<ComponentCandidate>, selected: Set<ComponentRule>, mode: DisplayMode,
     kind: IntentKind, saved: List<String>, query: String, filter: PriorityListFilter
@@ -23,6 +23,6 @@ fun priorityAppGroups(
             .sortedWith(compareBy({ it.activityLabel.lowercase() }, { it.rule.id }))
         if (matching.isEmpty()) null else PriorityAppGroup(pkg, matching, rank)
     }
-    return if (filter == PriorityListFilter.SELECTED) groups.sortedBy { it.rank }
-        else groups.sortedWith(compareBy({ it.components.first().appLabel.lowercase() }, { it.packageName }))
+    return groups.sortedWith(compareBy<PriorityAppGroup>({ it.rank ?: Int.MAX_VALUE },
+        { it.components.first().appLabel.lowercase() }, { it.packageName }))
 }
