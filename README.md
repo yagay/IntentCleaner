@@ -44,6 +44,14 @@ Root 只在明确更改时申请。禁用会影响所有使用该组件的地方
 
 宿主 Java 测试覆盖状态计算、命令目标校验、防注入、Root 进程输出/超时处理及既有分类、过滤、排序辅助与诊断逻辑。此环境未配置 Android SDK/Kotlin 编译器，未编译 APK、未运行 Kotlin/Gradle 测试、未做手机实测。
 
-## 本地环境
+## GitHub 自动编译 Debug
+
+推送 main 分支的源码或构建配置变更后自动运行；也可以进入 Actions → Build Debug APK → Run workflow 手动触发。无需自行配置 Android SDK 或签名 Secrets。
+
+工作流使用 Java17、SDK37、Build Tools36.0.0 和仓库中的 Gradle Wrapper 执行 `:app:assembleDebug`，不修改项目构建版本。成功后进入该次运行的 Artifacts，下载 `Intentcleaner-debug-运行编号-尝试编号`，解压取得 APK（保留14天）。失败可下载构建日志（保留7天），也可直接查看失败步骤。
+
+这是 Android 默认调试签名，不是正式发布签名；全新构建机生成的 Debug 密钥可能不同，不能保证覆盖已安装版本。签名不一致时不要直接卸载有重要数据的版本，应先备份。此工作流不发布 Release，不上传密钥，不运行设备测试；构建是否成功以 Actions 实际结果为准。
+
+## 本地构建环境
 
 保持 Gradle 9.4.1、AGP 9.2.0、Compile/Target SDK37、Min SDK31、Java/JVM17、libxposed API/Service102.0.0。SDK、签名及环境兼容由本地配置，不提交 local.properties 或私钥。
