@@ -40,6 +40,17 @@ class RootComponentCatalog(private val context: Context) {
     @Volatile var lastOperation = "No component operation"
         private set
 
+    fun requireRoot() {
+        lastOperation = "at=${System.currentTimeMillis()} status=checking_root"
+        try {
+            ComponentRootCommand.requireRoot()
+            lastOperation = "at=${System.currentTimeMillis()} status=root_granted"
+        } catch (failure: ComponentRootCommand.RootAccessException) {
+            lastOperation = "at=${System.currentTimeMillis()} status=root_unavailable message=${failure.message}"
+            throw failure
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun query(kind: CleanupKind): List<ComponentInfo> = when (kind) {
         CleanupKind.TILE -> pm.queryIntentServices(Intent(kind.action), flags).mapNotNull { it.serviceInfo }

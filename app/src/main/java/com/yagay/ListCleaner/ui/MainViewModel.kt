@@ -13,6 +13,7 @@ import com.yagay.ListCleaner.domain.TileConfig
 import com.yagay.ListCleaner.data.RootComponent
 import com.yagay.ListCleaner.data.RootComponentCatalog
 import com.yagay.ListCleaner.data.RootComponentScan
+import com.yagay.ListCleaner.data.ComponentRootCommand
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yagay.ListCleaner.ListCleanerApp
@@ -142,6 +143,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val componentBusy: StateFlow<Boolean> = mutableComponentBusy
     private val mutableComponentMessage = MutableStateFlow<String?>(null)
     val componentMessage: StateFlow<String?> = mutableComponentMessage
+    private val mutableComponentRootNotice = MutableStateFlow<String?>(null)
+    val componentRootNotice: StateFlow<String?> = mutableComponentRootNotice
+
+    fun dismissComponentRootNotice() { mutableComponentRootNotice.value = null }
 
     fun refreshComponents() {
         if (mutableComponentBusy.value) return
@@ -163,26 +168,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val targets = visibleTargets.filter { it.blocked == null && it.enabled != null && it.enabled != enable }
             .distinctBy { "${it.user}|${it.component.flattenToString()}" }
         if (targets.isEmpty()) return
+        mutableComponentRootNotice.value = null
         mutableComponentBusy.value = true
         mutableComponentMessage.value = "正在请求 Root 并核验系统状态…"
         viewModelScope.launch {
             // Finish observation even if navigation/lifecycle cancels the awaiting UI.
             withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
                 var completed = 0
+                var operationStarted = false
                 try {
+                    rootCatalog.requireRoot()
                     var result = ""
                     for (target in targets) {
+                        operationStarted = true
                         mutableComponentMessage.value = "正在${if (enable) "启用" else "禁用"} ${completed + 1}/${targets.size}：${target.label}"
                         result = rootCatalog.change(target, enable)
                         completed++
                     }
                     mutableComponentMessage.value = if (targets.size == 1) result
                         else "已核验：${completed} 个组件已${if (enable) "启用" else "禁用"}；请重新打开目标选择器"
+                } catch (failure: ComponentRootCommand.RootAccessException) {
+                    mutableComponentMessage.value = failure.message
+                    mutableComponentRootNotice.value = failure.message
                 } catch (failure: Exception) {
                     // Stop on failure: do not repeatedly prompt for Root or claim an atomic batch.
                     mutableComponentMessage.value = "已完成 $completed/${targets.size}，操作已停止：${failure.message ?: "操作失败"}。失败项请核对系统状态；剩余项未执行，已完成项不回滚。"
                 } finally {
-                    runCatching { rootCatalog.scan() }.onSuccess { mutableComponentScan.value = it }
+                    if (operationStarted) runCatching { rootCatalog.scan() }.onSuccess { mutableComponentScan.value = it }
                         .onFailure {
                             mutableComponentScan.value = RootComponentScan(warning = "操作后扫描失败，请刷新；不使用旧状态")
                         }

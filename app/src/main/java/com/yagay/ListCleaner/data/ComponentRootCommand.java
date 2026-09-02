@@ -8,6 +8,30 @@ import java.util.concurrent.atomic.AtomicReference;
 /** One explicit user action per invocation; bounded output/time, no persistent root daemon. */
 public final class ComponentRootCommand {
     private ComponentRootCommand() {}
+    public static final class RootAccessException extends IllegalStateException {
+        RootAccessException(String message) { super(message); }
+    }
+    private static final String ROOT_GUIDANCE =
+        "请打开 KernelSU / Magisk 等 Root 管理器，为“列表清理”开启超级用户权限，再返回重试。仅启用 LSPosed 模块不能代替 Root 授权。";
+
+    /** Read-only check for each explicit batch; do not cache authorization across actions. */
+    public static void requireRoot() {
+        final Result result;
+        try {
+            result = run("test \"$(id -u)\" = 0");
+        } catch (Exception failure) {
+            throw new RootAccessException("无法取得 Root 权限。" + ROOT_GUIDANCE);
+        }
+        verifyRoot(result);
+    }
+    static void verifyRoot(Result result) {
+        if (result.timedOut) {
+            throw new RootAccessException("等待 Root 授权超时，尚未更改组件。" + ROOT_GUIDANCE);
+        }
+        if (result.exitCode != 0) {
+            throw new RootAccessException("未获得 Root 权限，尚未更改组件。" + ROOT_GUIDANCE);
+        }
+    }
     public static final class Result {
         public final int exitCode;
         public final boolean timedOut;

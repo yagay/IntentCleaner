@@ -29,6 +29,17 @@ fun RootComponentsScreen(state: MainState, vm: MainViewModel) {
     val scan by vm.componentScan.collectAsState()
     val busy by vm.componentBusy.collectAsState()
     val message by vm.componentMessage.collectAsState()
+    val rootNotice by vm.componentRootNotice.collectAsState()
+    rootNotice?.let { notice ->
+        AlertDialog(
+            onDismissRequest = vm::dismissComponentRootNotice,
+            title = { Text("需要 Root 授权") },
+            text = { Text(notice) },
+            confirmButton = {
+                TextButton(onClick = vm::dismissComponentRootNotice) { Text("知道了") }
+            }
+        )
+    }
     var kind by remember { mutableStateOf<CleanupKind?>(null) }
     var viewFilter by remember { mutableStateOf(UiFilter.ALL) }
     var filterMenu by remember { mutableStateOf(false) }
