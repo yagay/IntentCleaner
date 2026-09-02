@@ -129,11 +129,12 @@ internal fun MainToolbar(query: String, expanded: Boolean, onQuery: (String) -> 
 }
 
 @Composable
-internal fun ListControls(state: MainState, onFilter: (IntentKind?) -> Unit, onUiFilter: (UiFilter) -> Unit) {
+internal fun ListControls(state: MainState, onFilter: (IntentKind?) -> Unit, onUiFilter: (UiFilter) -> Unit,
+                          includeAllKinds: Boolean = true, viewTitle: (UiFilter) -> String = { it.title }) {
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
         LazyRow(contentPadding = PaddingValues(horizontal = 12.dp)) {
-            items(listOf<IntentKind?>(null) + IntentKind.entries) { kind ->
+            items((if (includeAllKinds) listOf<IntentKind?>(null) else emptyList()) + IntentKind.entries) { kind ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     TextButton(onClick = { onFilter(kind) }) {
                         Text(kind?.shortTitle ?: "全部",
@@ -149,12 +150,12 @@ internal fun ListControls(state: MainState, onFilter: (IntentKind?) -> Unit, onU
             Text("查看", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Box {
                 TextButton(onClick = { menu = true }) {
-                    Text(state.uiFilter.title)
+                    Text(viewTitle(state.uiFilter))
                     Icon(Icons.Rounded.ExpandMore, null, Modifier.size(18.dp))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     UiFilter.entries.forEach { mode ->
-                        DropdownMenuItem(text = { Text(mode.title) },
+                        DropdownMenuItem(text = { Text(viewTitle(mode)) },
                             leadingIcon = { if (mode == state.uiFilter) Icon(Icons.Rounded.Check, null) },
                             onClick = { menu = false; onUiFilter(mode) })
                     }

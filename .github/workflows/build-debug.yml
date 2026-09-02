@@ -11,6 +11,10 @@ on:
       - 'gradlew'
       - '.github/workflows/build-debug.yml'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'app/**'
+      - '.github/workflows/build-debug.yml'
 
 permissions:
   contents: read
@@ -62,12 +66,19 @@ jobs:
           bash ./gradlew --no-daemon --console=plain --stacktrace :app:assembleDebug 2>&1 | tee debug-build.log
 
       - name: Upload Debug APK
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ListCleaner-debug-${{ github.run_number }}-${{ github.run_attempt }}
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Run unit tests
+        if: github.event_name == 'pull_request'
+        run: |
+          set -o pipefail
+          bash ./gradlew --no-daemon --console=plain --stacktrace :app:testDebugUnitTest 2>&1 | tee unit-test.log
 
       - name: Upload build diagnostics
         if: always()
@@ -79,6 +90,7 @@ jobs:
             sdk-packages.log
             sdk-install.log
             debug-build.log
+            unit-test.log
             app/build/reports/
             build/reports/
           if-no-files-found: ignore
