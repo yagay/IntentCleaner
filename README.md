@@ -2,7 +2,7 @@
 
 精简 Android 的分享、打开方式和文本处理菜单，让常用应用排在前面；也可以通过 Root 管理应用提供的磁贴、快捷方式创建入口和桌面小部件。
 
-[下载正式版](https://github.com/yagay/ListCleaner/releases/latest) · [反馈问题](https://github.com/yagay/ListCleaner/issues) · [更新记录](CHANGES-1.6.3.md)
+[下载正式版](https://github.com/yagay/ListCleaner/releases/latest) · [反馈问题](https://github.com/yagay/ListCleaner/issues)
 
 ## 使用要求
 
