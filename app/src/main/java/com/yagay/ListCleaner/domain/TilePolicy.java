@@ -1,8 +1,6 @@
 package com.yagay.ListCleaner.domain;
 
-import java.util.Set;
-
-/** Exact tile identities only. Unknown identities and current tiles always survive. */
+/** Canonical tile identities for validating legacy configuration and backups. */
 public final class TilePolicy {
     private TilePolicy() {}
     public static String canonical(String value) {
@@ -17,9 +15,5 @@ public final class TilePolicy {
             return "custom(" + parts[0] + "/" + cls + ")";
         }
         return spec.matches("[A-Za-z0-9_][A-Za-z0-9_.:-]*") ? spec : null;
-    }
-    public static boolean keep(String spec, boolean current, Set<String> hidden) {
-        String id = canonical(spec);
-        return current || id == null || !hidden.contains(id);
     }
 }

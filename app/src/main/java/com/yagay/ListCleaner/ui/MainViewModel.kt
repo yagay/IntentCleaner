@@ -486,7 +486,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         app.rules.setPriority(kind, com.yagay.ListCleaner.domain.moveVisiblePriority(current, visible, packageName, offset))
     }
 
-    fun resetPriority(kind: IntentKind) { if (canEdit()) app.rules.setPriority(kind, emptyList()) }
 
     fun movePriorityTo(kind: IntentKind, packageName: String, target: String, visible: List<String>, expected: List<String>) {
         if (!canEdit()) return

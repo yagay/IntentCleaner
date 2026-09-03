@@ -35,8 +35,6 @@ class RootComponentCatalog(private val context: Context) {
     private val flags = PackageManager.MATCH_DISABLED_COMPONENTS or
         PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS or PackageManager.MATCH_ALL or
         PackageManager.GET_META_DATA
-    @Volatile var lastScan = RootComponentScan()
-        private set
     @Volatile var lastOperation = "No component operation"
         private set
 
@@ -75,7 +73,7 @@ class RootComponentCatalog(private val context: Context) {
                 emptyList()
             }
         }.sortedWith(compareBy({ it.owner.lowercase() }, { it.label.lowercase() }, { it.id }))
-        return RootComponentScan(items, errors.joinToString("\n"), System.currentTimeMillis()).also { lastScan = it }
+        return RootComponentScan(items, errors.joinToString("\n"), System.currentTimeMillis())
     }
 
     private fun read(kind: CleanupKind, info: ComponentInfo): RootComponent {

@@ -54,13 +54,6 @@ class RuleRepository(context: Context) {
         mutableDiagnostic.value, android.os.Process.myUid() % 100_000, mutableTiles.value
     )
 
-    @Synchronized fun setTiles(value: TileConfig) {
-        value.validated()
-        prefs.edit().putString(KEY_TILES, json.encodeToString(TileConfig.serializer(), value)).apply()
-        mutableTiles.value = value
-        mutableRevision.value++
-    }
-
     @Synchronized
 
     fun setDiagnosticMode(enabled: Boolean) {

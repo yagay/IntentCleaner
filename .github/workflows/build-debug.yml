@@ -75,7 +75,6 @@ jobs:
           retention-days: 14
 
       - name: Run unit tests
-        if: github.event_name == 'pull_request'
         run: |
           set -o pipefail
           bash ./gradlew --no-daemon --console=plain --stacktrace :app:testDebugUnitTest 2>&1 | tee unit-test.log
