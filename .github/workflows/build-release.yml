@@ -157,6 +157,8 @@ jobs:
               '- 使用固定的 Release 签名，后续正式版本可使用同一签名覆盖升级。\n'
               '- 组件操作前检查 Root 权限，未授权或超时时明确提示授权方法。\n'
               '- 优先排序统一为勾选列表，支持全部／未优先／已优先筛选与单应用展开。\n'
+              '- 勾选后按优先位置排列，取消后恢复默认顺序；长按已优先应用可拖动排序。\n'
+              '- 补充规则页勾选作用说明，精简排序页标题和计数栏并整合操作介绍。\n'
               '- 搜索后仅交换匹配的优先应用，保留未显示的排序配置。\n'
               '- 宝石蓝列表与扫帚图标，支持圆形和系统主题图标。\n'
               '- 启用代码混淆及资源压缩，适用于 Android 12 及以上。\n\n'
@@ -185,8 +187,15 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists; increase versionCode/versionName instead of overwriting it."
-            exit 1
+            echo "::notice::Release $RELEASE_TAG already exists. Signed APK is available in this run's Artifacts; publication skipped."
+            {
+              echo "Release 编译和签名校验成功。"
+              echo ""
+              echo "版本 $RELEASE_TAG 已发布，本次跳过发布，不覆盖已有 Release。"
+              echo "本次源码编译的 APK 请从本次运行的 ListCleaner-release-$RELEASE_VERSION Artifact 下载。"
+              echo "要将这些改动发布为新版本，请递增 app/build.gradle.kts 的 versionCode 和 versionName。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           gh release create "$RELEASE_TAG" release-output/*.apk release-output/SHA256SUMS.txt release-output/signature.txt \
             --target "$GITHUB_SHA" --title "List Cleaner $RELEASE_VERSION" --notes-file release-notes.md

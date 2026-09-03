@@ -22,6 +22,9 @@
 
 修改 `app/build.gradle.kts` 中的版本号、发布工作流或签名配置后也会触发发布流程。
 发布新版本前同时递增 `versionCode` 和 `versionName`。已存在的版本不会被覆盖。
+重复编译已发布版本时，APK 编译、签名校验和 Artifact 上传仍会完成，发布步骤会提示跳过，
+不会因同名 Release 导致整个工作流失败。到该次 Actions 运行的 `ListCleaner-release-版本号`
+Artifact 下载本次源码编译的 APK；已有 Release 附件仍对应原发布的源码。
 
 ## 本地构建
 
