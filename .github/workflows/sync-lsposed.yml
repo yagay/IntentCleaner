@@ -1,0 +1,78 @@
+name: Sync LSPosed Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Source release tag (for example v1.6.3); empty means latest'
+        required: false
+        type: string
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ['Build and Publish Release']
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-lsposed.yml'
+      - 'tools/sync-lsposed.py'
+      - 'docs/lsposed/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lsposed-release-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: >-
+      github.repository == 'yagay/ListCleaner' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Never execute source from a PR or download executable workflow artifacts.
+      - name: Checkout trusted main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Test synchronization logic
+        run: python3 -m unittest discover -s tools -p 'test_sync_lsposed.py'
+
+      - name: Check publishing credential
+        env:
+          LSPOSED_REPO_TOKEN: ${{ secrets.LSPOSED_REPO_TOKEN }}
+        run: |
+          if [ -z "$LSPOSED_REPO_TOKEN" ]; then
+            echo '::error::Add LSPOSED_REPO_TOKEN to this repository Actions secrets. See docs/RELEASE.md.'
+            exit 1
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android verification tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: 'build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
+
+      - name: Verify published APK and synchronize official repository
+        env:
+          SOURCE_TOKEN: ${{ github.token }}
+          LSPOSED_REPO_TOKEN: ${{ secrets.LSPOSED_REPO_TOKEN }}
+          SOURCE_TAG: ${{ inputs.tag || github.event.release.tag_name || '' }}
+        run: python3 tools/sync-lsposed.py

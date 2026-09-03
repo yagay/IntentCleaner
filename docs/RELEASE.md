@@ -48,3 +48,34 @@ storeType=PKCS12
 
 新固定 Release 证书通常与旧 Debug 证书不同，因此首次切换可能无法直接覆盖安装。
 先在 App 内导出规则备份。后续始终使用同一 Release 签名即可正常覆盖升级。
+
+## 同步到 LSPosed 官方仓库
+
+源码和构建继续保留在 `yagay/ListCleaner`，模块介绍与正式 APK 发布到
+`Xposed-Modules-Repo/com.yagay.ListCleaner`。
+
+在**源码仓库** Settings → Secrets and variables → Actions 中添加 `LSPOSED_REPO_TOKEN`。
+令牌所属账号需要有官方模块仓库的写入权限。外部协作者可使用带 `public_repo` 权限的
+classic PAT；组织策略若禁止该令牌，需由组织管理员处理。令牌到期后更新同名 Secret，
+不要把令牌写入源码、日志或聊天。该凭据仅用于官方仓库同步，不替代 APK 签名配置。
+
+`Sync LSPosed Release` 工作流在以下情况运行：
+
+- `Build and Publish Release` 在 main 上成功结束后（包括重复编译已发布版本）。
+- 手动在源码仓库发布 Release 后。
+- main 上修改同步脚本、工作流或 `docs/lsposed/` 介绍资料后。
+- 手动 Actions → Sync LSPosed Release → Run workflow，选择 main；`tag` 填 `v1.6.3`
+  可补发指定版本，留空同步最新正式版。
+
+同步下载源码仓库**已发布的** APK、校验文件及签名报告，核对 APK 实际包名、版本、
+SHA-256 和固定签名证书后，以 `版本码-版本名` 创建官方 Release，例如 `28-1.6.3`。
+更新说明来自原 Release，并附原始发布链接。不会把同版本重新编译的 Artifact 替换进去。
+官方仓库的 README、SUMMARY 和简介由 `docs/lsposed/` 及脚本统一维护。
+
+附件全部上传到草稿后才发布；失败后可重跑，已上传且相同的附件会跳过。
+相同版本若已有不同文件则停止并提示，不覆盖或删除旧附件。
+同步失败不影响自己仓库已发布的版本，也不需要重新生成签名密钥。
+
+发布工作流使用 `GITHUB_TOKEN` 创建 Release 不会触发另一个普通 Release 事件工作流，
+因此这里同时使用 `workflow_run` 接续同步。同步只运行可信 main 分支的脚本，不运行 PR
+源码或下载 PR 构建产物，不向 PR 提供跨仓库令牌。
