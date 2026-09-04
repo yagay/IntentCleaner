@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 import uuid
 
@@ -103,10 +104,21 @@ def send_document(token, chat_id, apk, caption):
     try:
         with urllib.request.urlopen(request, timeout=180) as response:
             result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = ""
+        try:
+            payload = json.loads(error.read().decode("utf-8"))
+            detail = payload.get("description", "")
+        except Exception:
+            pass
+        message = f"Telegram upload failed: HTTP {error.code}"
+        if detail:
+            message += f" - {detail}"
+        raise RuntimeError(message) from error
     except Exception as error:
         raise RuntimeError(f"Telegram upload failed: {error}") from error
     if not result.get("ok"):
-        raise RuntimeError("Telegram rejected the release message")
+        raise RuntimeError(f"Telegram rejected the release message: {result.get('description', 'unknown error')}")
     return result["result"]["message_id"]
 
 
