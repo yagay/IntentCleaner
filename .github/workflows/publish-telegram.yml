@@ -1,0 +1,60 @@
+name: Publish Telegram Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Source release tag (for example v1.6.4); empty means latest'
+        required: false
+        type: string
+  workflow_run:
+    workflows: ['Build and Publish Release']
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-telegram.yml'
+      - 'tools/publish-telegram.py'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: telegram-release-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'yagay/ListCleaner' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check Telegram credential
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo '::error::Add TELEGRAM_BOT_TOKEN to this repository Actions secrets. The bot must be an administrator of @LISTCLEANER with permission to post messages.'
+            exit 1
+          fi
+
+      - name: Publish Release APK to Telegram channel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SOURCE_TAG: ${{ inputs.tag || '' }}
+        run: python3 tools/publish-telegram.py
