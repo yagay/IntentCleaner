@@ -85,13 +85,10 @@ class ListCleanerModule : XposedModule() {
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         processName = param.processName
         systemServer = param.isSystemServer
-        // ApplicationInfo is not reliable during early system_server boot on every framework.
-        // Identity is supplied with the atomic config by our app over framework-owned preferences.
         record("MODULE_LOADED version=${BuildConfig.VERSION_CODE} systemServer=$systemServer frameworkLog=direct-api")
     }
 
     @Synchronized override fun onHotReloading(param: HotReloadingParam): Boolean {
-        // No module-owned threads/native hooks. Never transfer old-generation objects.
         if (listenerRegistered) {
             preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
             listenerRegistered = false
@@ -105,8 +102,6 @@ class ListCleanerModule : XposedModule() {
         systemServer = param.isSystemServer
         val loaders = linkedSetOf<ClassLoader>()
         try {
-            // Validate the incoming handle set before replacing any hook. This is not
-            // whole-generation rollback, but avoids destructive changes on an unusable set.
             check(param.oldHookHandles.any { handle ->
                 val method = handle.executable as? Method
                 (handle.id == "$HOOK_ID-${if (systemServer) "system" else "resolver"}" &&
@@ -137,9 +132,7 @@ class ListCleanerModule : XposedModule() {
                     else -> handle.unhook()
                 }
             }
-            // Use host executable loaders, not module/APK loaders, to discover newly supported hooks.
             if (!systemServer) runCatching {
-                // Query handles may belong only to the boot loader. Recover the host APK loader.
                 val application = Class.forName("android.app.ActivityThread")
                     .getDeclaredMethod("currentApplication").invoke(null) as? Context
                 application?.classLoader?.let(loaders::add)
@@ -150,13 +143,10 @@ class ListCleanerModule : XposedModule() {
             }
             check(installedMethods.any {
                 it.endsWith(if (systemServer) "@SYSTEM" else "@RESOLVER")
-            }) {
-                "No query hooks after reload; restart required"
-            }
+            }) { "No query hooks after reload; restart required" }
             record("HOT_RELOAD_READY version=${BuildConfig.VERSION_CODE} hooks=${installedMethods.size}")
             if (!systemServer && !processName.startsWith(SYSTEM_UI_PACKAGE)) recordOrderingCapability()
         } catch (failure: Throwable) {
-            // Per-hook replacement is atomic, the whole set is not. Do not report success on partial failure.
             record("HOT_RELOAD_FAILED version=${BuildConfig.VERSION_CODE} error=${failure.javaClass.name}")
             throw failure
         }
@@ -178,7 +168,6 @@ class ListCleanerModule : XposedModule() {
 
     override fun onPackageReady(param: PackageReadyParam) {
         record("PACKAGE_READY package=${param.packageName} loader=${param.classLoader.javaClass.name}")
-        // APK loaders hosted inside system_server cannot see services.jar reliably.
         if (systemServer) {
             if (!listenerRegistered) initializePreferences()
             return
@@ -187,10 +176,8 @@ class ListCleanerModule : XposedModule() {
         if (param.packageName == FRAMEWORK_PACKAGE || param.packageName == INTENT_RESOLVER_PACKAGE) {
             installResolverClientHooks(param.classLoader)
         }
-        // Component cleanup now uses explicit Root state changes, not SystemUI hooks.
     }
 
-    /** Hook the PackageManager binder boundary, not every similarly named PMS method. */
     private fun installSystemServerQueryHooks(classLoader: ClassLoader) {
         var installed = 0
         SYSTEM_QUERY_CLASSES.forEach { className ->
@@ -208,7 +195,6 @@ class ListCleanerModule : XposedModule() {
         record("SYSTEM_HOOKS new=$installed total=${installedMethods.size}")
     }
 
-    /** Resolver fallback plus stable per-kind application promotion. */
     private fun installResolverClientHooks(classLoader: ClassLoader) {
         val clazz = runCatching {
             Class.forName("android.app.ApplicationPackageManager", false, classLoader)
@@ -224,7 +210,6 @@ class ListCleanerModule : XposedModule() {
         installFinalOrderingHooks(classLoader)
     }
 
-    /** Best-effort final AOSP ordering: ranking after PM queries otherwise undoes promotion. */
     private fun installFinalOrderingHooks(loader: ClassLoader) {
         listOf("com.android.internal.app.ResolverListAdapter", "com.android.internal.app.ChooserListAdapter",
             "com.android.intentresolver.ResolverListAdapter", "com.android.intentresolver.ChooserListAdapter").forEach { name ->
@@ -253,8 +238,6 @@ class ListCleanerModule : XposedModule() {
                 }
             }.onFailure { record("ORDER_DISCOVERY_FAILED class=$name error=${it.javaClass.name}") }
         }
-        // Both AOSP chooser versions publish their independently alphabetized mSortedList
-        // through BaseAdapter notifications. Restrict this hook to known chooser receivers.
         runCatching {
             val method = Class.forName("android.widget.BaseAdapter", false, loader)
                 .getDeclaredMethod("notifyDataSetChanged")
@@ -308,7 +291,6 @@ class ListCleanerModule : XposedModule() {
 
     private fun orderHooker() = XposedInterface.Hooker { chain ->
         pollPreferences()
-
         val replacement = runCatching {
             val receiver = chain.thisObject ?: return@runCatching null
             val kind = adapterKind(receiver) ?: run {
@@ -328,11 +310,9 @@ class ListCleanerModule : XposedModule() {
             diagnostic("ORDER_FAILED error=${it.javaClass.name}")
             null
         }
-        // Never catch/retry proceed: Android must execute exactly once.
         val result = if (replacement == null) chain.proceed() else chain.proceed(replacement)
         if (replacement != null) diagnostic("ORDER_DELIVERED stage=ranked uiVerified=false")
         result
-
     }
 
     private fun alphabeticalOrderHooker() = XposedInterface.Hooker { chain ->
@@ -345,15 +325,12 @@ class ListCleanerModule : XposedModule() {
             pollPreferences()
             val kind = adapterKind(receiver) ?: return@runCatching
             val items = OrderingAccess.field(receiver, "mSortedList")
-            // Known AOSP backing lists are ArrayLists. Don't mutate arbitrary OEM list types.
             if (items == null || items.javaClass != java.util.ArrayList::class.java) {
                 diagnostic("ORDER_SKIP stage=alpha reason=unsupported_backing_list")
                 return@runCatching
             }
             @Suppress("UNCHECKED_CAST")
             val list = items as java.util.ArrayList<Any?>
-            // Alphabetical groups may include caller-provided targets. Freeze those packages,
-            // including grouped siblings, rather than moving caller-owned entries indirectly.
             val callerTargets = OrderingAccess.field(receiver, "mCallerTargets") as List<*>
             val fixed = callerTargets.map { target ->
                 val info = OrderingAccess.call(requireNotNull(target), "getResolveInfo") as ResolveInfo
@@ -361,7 +338,6 @@ class ListCleanerModule : XposedModule() {
             }.toSet()
             val ordered = orderItems(list, kind, snapshot, "alpha", fixed)
             if (ordered !== list) {
-                // All reflection and validation completed before touching the live list.
                 ordered.forEachIndexed { index, item -> list[index] = item }
                 diagnostic("ORDER_DELIVERED stage=alpha kind=$kind uiVerified=false")
             }
@@ -390,7 +366,6 @@ class ListCleanerModule : XposedModule() {
         queryInProgress.set(true)
         try {
             pollPreferences()
-            // Only call proceed once. Exceptions from Android/other modules must propagate.
             val original = chain.proceed()
             try {
                 processQuery(chain, original, layer, callerUid)
@@ -429,7 +404,6 @@ class ListCleanerModule : XposedModule() {
             return original
         }
         val moduleAppId = snapshot.managerAppId
-        // The management UI must still discover hidden components so users can unhide them.
         if (layer == Layer.SYSTEM && !ManagerIdentity.valid(moduleAppId)) {
             diagnostic("FILTER_PAUSED reason=manager_identity_unknown open_module_app_to_sync")
             return original
@@ -474,7 +448,6 @@ class ListCleanerModule : XposedModule() {
         }
     }
 
-    /** Null means no-op, including the safety case where a rule would remove every target. */
     private fun transform(kind: IntentKind, values: List<*>, layer: Layer, callerUid: Int): List<*>? {
         if (values.isEmpty()) { diagnostic("SKIP $layer $kind empty_input"); return null }
         val current = snapshot
@@ -487,13 +460,18 @@ class ListCleanerModule : XposedModule() {
             values.filter { value ->
                 val info = value as? ResolveInfo ?: return@filter true
                 val activity = info.activityInfo ?: return@filter true
-                // Preserve targets owned by the caller so filtering cannot break internal queries.
                 if (FilterPolicy.sameCaller(callerUid, activity.applicationInfo?.uid ?: -1)) {
                     diagnostic("KEEP_SAME_APP $layer $kind ${activity.packageName}/${activity.name} callerUid=$callerUid", detail = true)
                     return@filter true
                 }
-                val selected = "${kind.name}|${activity.packageName}|${activity.name}" in current.configured
-                diagnostic("CANDIDATE $layer $kind ${activity.packageName}/${activity.name} selected=$selected", detail = true)
+                val canonicalClass = com.yagay.ListCleaner.domain.ComponentIdentity.canonicalClassName(
+                    activity.packageName, activity.name, activity.targetActivity
+                )
+                val selected = "${kind.name}|${activity.packageName}|$canonicalClass" in current.configured
+                diagnostic(
+                    "CANDIDATE $layer $kind ${activity.packageName}/${activity.name} target=${activity.targetActivity} canonical=$canonicalClass selected=$selected",
+                    detail = true
+                )
                 current.displayMode.includes(selected, current.hasSelection(kind)).also {
                     if (!it) changed = true
                 }
@@ -504,8 +482,6 @@ class ListCleanerModule : XposedModule() {
             Log.w(TAG, "Refusing to empty $kind resolver; keeping Android result")
             return null
         }
-        // Text actions normally become an in-app menu without visiting a Resolver adapter.
-        // Only PROCESS_TEXT is promoted here; VIEW/SEND remain post-ranking operations.
         val ordered = if (kind == IntentKind.PROCESS_TEXT) runCatching {
             orderItems(filtered, kind, current, "text_query")
         }.getOrElse {
@@ -604,7 +580,6 @@ class ListCleanerModule : XposedModule() {
         record(message)
     }
 
-    /** Framework log is also retained by LSPosed; Logcat alone can lose boot messages. */
     private fun record(message: String) {
         val line = "pid=${Process.myPid()} process=$processName uptimeMs=${SystemClock.elapsedRealtime()} $message"
         runCatching { Log.i(DIAGNOSTIC_TAG, line) }
@@ -630,7 +605,6 @@ class ListCleanerModule : XposedModule() {
         val SYSTEM_QUERY_CLASSES = listOf(
             "com.android.server.pm.PackageManagerService\$IPackageManagerImpl",
             "com.android.server.pm.IPackageManagerImpl",
-            // Pre-refactor/vendor implementations may expose the binder method directly.
             "com.android.server.pm.PackageManagerService"
         )
     }
