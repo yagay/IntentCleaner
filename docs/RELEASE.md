@@ -79,3 +79,24 @@ SHA-256 和固定签名证书后，以 `版本码-版本名` 创建官方 Releas
 发布工作流使用 `GITHUB_TOKEN` 创建 Release 不会触发另一个普通 Release 事件工作流，
 因此这里同时使用 `workflow_run` 接续同步。同步只运行可信 main 分支的脚本，不运行 PR
 源码或下载 PR 构建产物，不向 PR 提供跨仓库令牌。
+
+## 自动发布到 Telegram 频道
+
+正式 Release 成功后，`Publish Telegram Release` 工作流会把对应的 Release APK 作为文件
+直接发布到 Telegram 频道，并在附件说明中包含版本号、Release 更新说明、GitHub Release
+链接和 LSPosed 官方仓库链接。
+
+首次使用时，在源码仓库 Settings → Secrets and variables → Actions 添加：
+
+- `TELEGRAM_BOT_TOKEN`：由 `@BotFather` 创建的 Bot Token。不要写入源码、日志或聊天。
+- `TELEGRAM_CHAT_ID`：可选。默认已经使用 `@LISTCLEANER`；只有以后更换频道时才需要配置。
+
+需要把 Bot 加入 `@LISTCLEANER` 频道并设为管理员，至少授予发布消息权限。
+
+工作流在 `Build and Publish Release` 于 main 成功结束后自动运行，也支持手动运行。
+手动运行时可以填写 `v1.6.4` 这类稳定版本 Tag；留空则使用最新正式 Release。
+
+每次成功发送后，脚本会在对应 GitHub Release 中加入 `telegram-published.json` 标记附件，
+记录已发送的版本与 Telegram `message_id`。之后即使重新运行相同版本，也会检测该标记并
+跳过发送，避免重复发布。Telegram 临时故障只会让该独立工作流失败，不影响 GitHub Release、
+APK 签名结果或 LSPosed 官方仓库同步。
