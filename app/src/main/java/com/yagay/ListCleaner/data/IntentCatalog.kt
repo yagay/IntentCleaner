@@ -9,6 +9,7 @@ import android.net.Uri
 import android.util.LruCache
 import androidx.core.graphics.drawable.toBitmap
 import com.yagay.ListCleaner.domain.ComponentCandidate
+import com.yagay.ListCleaner.domain.ComponentIdentity
 import com.yagay.ListCleaner.domain.ComponentRule
 import com.yagay.ListCleaner.domain.IntentKind
 import com.yagay.ListCleaner.domain.intentKind
@@ -49,7 +50,6 @@ class IntentCatalog(private val context: Context) {
         val found = mutableListOf<ComponentCandidate>()
         val known = mutableSetOf<String>()
         val report = StringBuilder("startedAt=${Instant.now()}\nmanagerUid=${android.os.Process.myUid()}\n")
-        // Compare discovery against menu-style queries without launching any activity.
         for (scheme in listOf("http", "https")) {
             val web = Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://example.com")).addCategory(Intent.CATEGORY_BROWSABLE)
             runCatching {
@@ -83,7 +83,6 @@ class IntentCatalog(private val context: Context) {
         result
     }
 
-    /** Query only; does not launch a target or read file contents, and never logs its URI. */
     suspend fun inspectFile(uri: Uri): List<ComponentCandidate> = withContext(Dispatchers.IO) {
         try {
             val mime = context.contentResolver.getType(uri)
@@ -110,23 +109,25 @@ class IntentCatalog(private val context: Context) {
     private fun query(probe: Probe, discovery: Boolean = true): QueryResult {
         val kind = probe.intent.intentKind() ?: return QueryResult(emptyList(), 0)
         val flags = queryFlags(kind, discovery)
-        // PM applies per-user dynamic enabled overrides. Never ask for disabled entries,
-        // then never veto its result using the manifest's ActivityInfo.enabled default.
         check(flags and (PackageManager.MATCH_DISABLED_COMPONENTS or
             PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS) == 0)
         val raw = context.packageManager.queryIntentActivities(probe.intent, flags)
         val candidates = raw.mapNotNull { info ->
             val activity = info.activityInfo ?: return@mapNotNull null
-            val rule = ComponentRule(kind, activity.packageName, activity.name)
+            val canonicalClass = ComponentIdentity.canonicalClassName(
+                activity.packageName, activity.name, activity.targetActivity
+            )
+            val rule = ComponentRule(kind, activity.packageName, canonicalClass)
             if (!rule.isValid()) return@mapNotNull null
             val managerUid = android.os.Process.myUid()
             val targetUid = activity.applicationInfo?.uid ?: -1
             val restricted = FilterPolicy.catalogRestricted(activity.exported, targetUid, managerUid)
-            // This is a management catalog, not a promise that our app can launch the target.
-            // The real source app can have different permissions. Keep those facts diagnostic.
             val facts = buildList {
                 add("启用状态以系统查询为准；元数据 activityEnabled=${activity.enabled} appEnabled=${activity.applicationInfo?.enabled}")
                 add("exported=${activity.exported} targetUid=$targetUid managerUid=$managerUid")
+                if (activity.targetActivity?.isNotBlank() == true) {
+                    add("activityAlias=${activity.name} targetActivity=${activity.targetActivity} canonical=$canonicalClass")
+                }
                 if (restricted) add("非公开的其他应用组件；不放入普通目录")
                 activity.permission?.takeIf { it.isNotBlank() }?.let { permission ->
                     val granted = runCatching { context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED }.getOrNull()
