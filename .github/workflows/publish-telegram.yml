@@ -55,6 +55,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID: '@LISTCLEANER'
           SOURCE_TAG: ${{ inputs.tag || '' }}
         run: python3 tools/publish-telegram.py
