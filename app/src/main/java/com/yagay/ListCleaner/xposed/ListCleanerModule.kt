@@ -292,12 +292,16 @@ class ListCleanerModule : XposedModule() {
     private fun orderHooker() = XposedInterface.Hooker { chain ->
         pollPreferences()
         val replacement = runCatching {
+            val current = snapshot
+            if (current.displayMode == DisplayMode.SHOW_ALL) {
+                diagnostic("ORDER_SKIP reason=show_all")
+                return@runCatching null
+            }
             val receiver = chain.thisObject ?: return@runCatching null
             val kind = adapterKind(receiver) ?: run {
                 diagnostic("ORDER_SKIP reason=unclassified_intent")
                 return@runCatching null
             }
-            val current = snapshot
             val priorities = current.priorities.apps[kind].orEmpty()
             if (priorities.isEmpty()) {
                 diagnostic("ORDER_SKIP kind=$kind reason=no_priorities")
@@ -323,6 +327,10 @@ class ListCleanerModule : XposedModule() {
                 return@runCatching
             }
             pollPreferences()
+            if (snapshot.displayMode == DisplayMode.SHOW_ALL) {
+                diagnostic("ORDER_SKIP stage=alpha reason=show_all")
+                return@runCatching
+            }
             val kind = adapterKind(receiver) ?: return@runCatching
             val items = OrderingAccess.field(receiver, "mSortedList")
             if (items == null || items.javaClass != java.util.ArrayList::class.java) {
@@ -451,10 +459,12 @@ class ListCleanerModule : XposedModule() {
     private fun transform(kind: IntentKind, values: List<*>, layer: Layer, callerUid: Int): List<*>? {
         if (values.isEmpty()) { diagnostic("SKIP $layer $kind empty_input"); return null }
         val current = snapshot
+        if (current.displayMode == DisplayMode.SHOW_ALL) {
+            diagnostic("NO_CHANGE $layer $kind size=${values.size} reason=show_all")
+            return null
+        }
         var changed = false
-        val filtered = if (current.displayMode == DisplayMode.SHOW_ALL ||
-            (!current.hasSelection(kind) && current.displayMode != DisplayMode.SHOW_SELECTED)
-        ) {
+        val filtered = if (!current.hasSelection(kind) && current.displayMode != DisplayMode.SHOW_SELECTED) {
             values
         } else {
             values.filter { value ->
