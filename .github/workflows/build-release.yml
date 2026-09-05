@@ -6,12 +6,14 @@ on:
     paths:
       - 'app/**'
       - '*.gradle.kts'
+      - 'RELEASE_NOTES.md'
       - '.github/workflows/build-release.yml'
       - 'tools/prepare-release-signing.py'
   push:
     branches: [main]
     paths:
       - 'app/build.gradle.kts'
+      - 'RELEASE_NOTES.md'
       - '.github/workflows/build-release.yml'
       - 'tools/prepare-release-signing.py'
       - 'signing/release-certificate.sha256'
@@ -61,6 +63,7 @@ jobs:
             release-build.log
             app/build/outputs/mapping/release/missing_rules.txt
           retention-days: 7
+
   release:
     permissions:
       contents: write
@@ -107,7 +110,6 @@ jobs:
       - name: Compile optimized Release APK
         run: |
           set -euo pipefail
-          # With no Secret, validate R8/resource compilation only. Publication is gated below.
           bash ./gradlew --no-daemon --console=plain --stacktrace -PallowUnsignedRelease=true :app:assembleRelease 2>&1 | tee release-build.log
 
       - name: Require the fixed signing key before publication
@@ -133,11 +135,13 @@ jobs:
           python3 - <<'PY'
           import hashlib, os, re, shutil
           from pathlib import Path
+
           sig = Path('release-output/signature.txt').read_text()
           match = re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', sig)
           expected = Path('signing/release-certificate.sha256').read_text().strip().lower()
           if not match or match.group(1).lower() != expected:
               raise SystemExit('APK certificate differs from the pinned release certificate')
+
           text = (Path(os.environ['RUNNER_TEMP']) / 'release-badging.txt').read_text()
           package = re.search(r"package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", text)
           if not package or package.group(1) != 'com.yagay.ListCleaner':
@@ -145,27 +149,27 @@ jobs:
           version = package.group(3)
           if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
               raise SystemExit('Expected a stable semantic version')
-          if "application-debuggable" in text:
+          if 'application-debuggable' in text:
               raise SystemExit('Refusing to publish a debuggable APK')
+
+          notes = Path('RELEASE_NOTES.md').read_text(encoding='utf-8').strip()
+          if not notes:
+              raise SystemExit('RELEASE_NOTES.md is empty')
+          expected_heading = f'列表清理 / List Cleaner {version}'
+          if notes.splitlines()[0].strip() != expected_heading:
+              raise SystemExit(f'RELEASE_NOTES.md heading must be: {expected_heading}')
+
           name = f'ListCleaner-{version}-release.apk'
           output = Path('release-output') / name
-          shutil.copyfile('app/build/outputs/apk/release/app-release.apk', output)
+          shutil.copyfile(apk, output)
           digest = hashlib.sha256(output.read_bytes()).hexdigest()
           Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {name}\n')
           Path('release-notes.md').write_text(
-              f'列表清理 / List Cleaner {version}\n\n'
-              '- 使用固定的 Release 签名，后续正式版本可使用同一签名覆盖升级。\n'
-              '- 组件操作前检查 Root 权限，未授权或超时时明确提示授权方法。\n'
-              '- 优先排序统一为勾选列表，支持全部／未优先／已优先筛选与单应用展开。\n'
-              '- 勾选后按优先位置排列，取消后恢复默认顺序；长按已优先应用可拖动排序。\n'
-              '- 补充规则页勾选作用说明，精简排序页标题和计数栏并整合操作介绍。\n'
-              '- 搜索后仅交换匹配的优先应用，保留未显示的排序配置。\n'
-              '- 宝石蓝列表与扫帚图标，支持圆形和系统主题图标。\n'
-              '- 启用代码混淆及资源压缩，适用于 Android 12 及以上。\n\n'
-              '旧 Debug 版签名可能不同；安装前请导出规则备份。\n\n'
+              notes + '\n\n'
               f'版本码：{package.group(2)}\n\n'
               f'签名证书 SHA-256：`{expected}`\n\n'
-              f'源码提交：`{os.environ["GITHUB_SHA"]}`\n')
+              f'源码提交：`{os.environ["GITHUB_SHA"]}`\n',
+              encoding='utf-8')
           with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:
               stream.write(f'tag=v{version}\nversion={version}\n')
           PY
@@ -178,7 +182,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release
+      - name: Publish or refresh GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -187,18 +191,18 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            echo "::notice::Release $RELEASE_TAG already exists. Signed APK is available in this run's Artifacts; publication skipped."
+            gh release edit "$RELEASE_TAG" --title "List Cleaner $RELEASE_VERSION" --notes-file release-notes.md
+            echo "::notice::Release $RELEASE_TAG already exists; refreshed notes only and kept published assets unchanged."
             {
               echo "Release 编译和签名校验成功。"
               echo ""
-              echo "版本 $RELEASE_TAG 已发布，本次跳过发布，不覆盖已有 Release。"
-              echo "本次源码编译的 APK 请从本次运行的 ListCleaner-release-$RELEASE_VERSION Artifact 下载。"
-              echo "要将这些改动发布为新版本，请递增 app/build.gradle.kts 的 versionCode 和 versionName。"
+              echo "版本 $RELEASE_TAG 已存在，本次已刷新 Release notes；未覆盖已发布 APK。"
+              echo "本次重新编译的 APK 可从本次 ListCleaner-release-$RELEASE_VERSION Artifact 下载。"
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          else
+            gh release create "$RELEASE_TAG" release-output/*.apk release-output/SHA256SUMS.txt release-output/signature.txt \
+              --target "$GITHUB_SHA" --title "List Cleaner $RELEASE_VERSION" --notes-file release-notes.md
           fi
-          gh release create "$RELEASE_TAG" release-output/*.apk release-output/SHA256SUMS.txt release-output/signature.txt \
-            --target "$GITHUB_SHA" --title "List Cleaner $RELEASE_VERSION" --notes-file release-notes.md
 
       - name: Remove private signing material
         if: always()
