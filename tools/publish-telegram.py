@@ -138,6 +138,12 @@ def main():
         raise ValueError(f"Release asset is missing: {apk_name}")
 
     release_body = release.get("body", "")
+    tracked_notes_path = Path("RELEASE_NOTES.md")
+    if tracked_notes_path.is_file():
+        tracked_notes = tracked_notes_path.read_text(encoding="utf-8").strip()
+        if tracked_notes and not release_body.strip().startswith(tracked_notes):
+            raise ValueError("Published GitHub Release notes are not refreshed from RELEASE_NOTES.md yet")
+
     body_sha256 = hashlib.sha256(release_body.encode("utf-8")).hexdigest()
     marker_asset = find_asset(release, MARKER_NAME)
 
