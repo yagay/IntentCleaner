@@ -4,18 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Source release tag (for example v1.6.4); empty means latest'
+        description: 'Source release tag (for example v1.6.5); empty means latest'
         required: false
         type: string
   workflow_run:
     workflows: ['Build and Publish Release']
     types: [completed]
     branches: [main]
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/publish-telegram.yml'
-      - 'tools/publish-telegram.py'
 
 permissions:
   contents: write
