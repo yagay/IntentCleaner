@@ -161,7 +161,8 @@ jobs:
 
           name = f'ListCleaner-{version}-release.apk'
           output = Path('release-output') / name
-          shutil.copyfile(apk, output)
+          source_apk = Path('app/build/outputs/apk/release/app-release.apk')
+          shutil.copyfile(source_apk, output)
           digest = hashlib.sha256(output.read_bytes()).hexdigest()
           Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {name}\n')
           Path('release-notes.md').write_text(
